@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Identity strings for ticket #26. Kept in their own file so the first version's
+  identity surface does not have to touch the app's existing string catalogue.
+-->
+<resources>
+  <string name="identity_sign_in_title">Sign in</string>
+  <string name="identity_sign_in_subtitle">This app is for invited identities.</string>
+  <string name="identity_name_label">Name</string>
+  <string name="identity_password_label">Password</string>
+  <string name="identity_sign_in_action">Sign in</string>
+  <string name="identity_have_invite">I have an invite code</string>
+  <string name="identity_register_title">Redeem an invite</string>
+  <string name="identity_register_subtitle">An invite code works once.</string>
+  <string name="identity_invite_code_label">Invite code</string>
+  <string name="identity_register_action">Create identity</string>
+  <string name="identity_back_to_sign_in">Back to sign in</string>
+
+  <string name="identity_account_title">Your identity</string>
+  <string name="identity_short_id_label">Short number</string>
+  <string name="identity_role_admin">Administrator</string>
+  <string name="identity_role_agent">Agent</string>
+  <string name="identity_sign_out_action">Sign out</string>
+
+  <string name="identity_invites_title">Invites</string>
+  <string name="identity_invites_explain">Create a single-use code and give it to the person you are inviting.</string>
+  <string name="identity_invites_create_action">Create an invite</string>
+  <string name="identity_invites_created">Invite code</string>
+
+  <string name="identity_not_ready_title">Not in this version</string>
+  <string name="identity_not_ready_body">This area is not part of the first version and cannot be opened here.</string>
+  <string name="identity_not_ready_signed_out">Sign in to continue.</string>
+
+  <string name="identity_working">Working…</string>
+  <string name="identity_unreachable">The backend could not be reached.</string>
+</resources>

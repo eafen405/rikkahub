@@ -27,6 +27,7 @@ data class IdentityScope(
 enum class IdentityDestination {
     SIGN_IN,
     REGISTER,
+    ACCOUNT,
     CONVERSATION,
     GATEWAY,
     INVITES,
@@ -42,18 +43,26 @@ enum class IdentityDestination {
  *     including the administrator. Gating it by identity alone would leave a
  *     reachable screen behind a flag, which is hiding, not closing.
  *  2. **May this identity reach it?** Sign-in areas belong to signed-out
- *     visitors; the invite operation belongs to the administrator.
+ *     visitors; the account area and invite operation belong to a signed-in
+ *     identity, and minting invites to the administrator alone.
  *
  * A destination of `null` means "a screen this gate does not know", and it is
  * refused for everyone. That is what makes the legacy local-execution and
  * system-management paths impassable rather than merely hidden: they are
  * composed through destinations that do not exist here.
  *
- * Areas delivered by this ticket: [IdentityDestination.SIGN_IN],
- * [IdentityDestination.REGISTER] and [IdentityDestination.INVITES]. Remote
- * conversation is ticket #28 and the gateway is ticket #43; until those land
- * their destinations are deliberately undelivered, so they compose the explicit
- * not-ready page and never a working feature.
+ * **Delivered by this ticket:** [IdentityDestination.SIGN_IN],
+ * [IdentityDestination.REGISTER], [IdentityDestination.ACCOUNT] and
+ * [IdentityDestination.INVITES]. Remote conversation is ticket #28 and the
+ * gateway is ticket #43; until those land their destinations are deliberately
+ * undelivered, so they compose the explicit not-ready page and never a working
+ * feature.
+ *
+ * The conversation destination deserves a note: rikkahub already *has* a chat
+ * page, and it is tempting to call it delivered because it exists. It is not,
+ * because that page drives local model execution — exactly the path the first
+ * version must not leave triggerable. It becomes composable when ticket #28
+ * makes it a remote conversation.
  */
 object IdentityAccessPolicy {
 
@@ -61,6 +70,7 @@ object IdentityAccessPolicy {
     private val DELIVERED = setOf(
         IdentityDestination.SIGN_IN,
         IdentityDestination.REGISTER,
+        IdentityDestination.ACCOUNT,
         IdentityDestination.INVITES,
     )
 
@@ -77,18 +87,22 @@ object IdentityAccessPolicy {
         if (destination == null || !isDelivered(destination)) return false
         return when (destination) {
             // Credential entry belongs to visitors; a signed-in identity has no
-            // business on the sign-in page.
+            // business back on the sign-in pages.
             IdentityDestination.SIGN_IN,
             IdentityDestination.REGISTER,
             -> !identity.signedIn
+
+            // The identity area this release actually delivers: who you are,
+            // and the operations your identity is allowed to perform.
+            IdentityDestination.ACCOUNT -> identity.signedIn
 
             // Minting invites is the administrator's own operation. An ordinary
             // agent is refused here by the policy as well as by the backend.
             IdentityDestination.INVITES -> identity.isAdmin
 
             // Not delivered by this ticket; the rule above already refused it.
-            // Listed so adding the implementation makes the compiler revisit
-            // this decision instead of silently picking a default.
+            // Listed so that landing the implementation makes the compiler
+            // revisit this decision instead of silently picking a default.
             IdentityDestination.CONVERSATION,
             IdentityDestination.GATEWAY,
             -> identity.signedIn
