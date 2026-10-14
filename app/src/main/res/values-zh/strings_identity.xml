@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="identity_sign_in_title">登录</string>
+  <string name="identity_sign_in_subtitle">本应用仅面向受邀身份。</string>
+  <string name="identity_name_label">名称</string>
+  <string name="identity_password_label">密码</string>
+  <string name="identity_sign_in_action">登录</string>
+  <string name="identity_have_invite">我有邀请码</string>
+  <string name="identity_register_title">使用邀请码</string>
+  <string name="identity_register_subtitle">一个邀请码只能使用一次。</string>
+  <string name="identity_invite_code_label">邀请码</string>
+  <string name="identity_register_action">创建身份</string>
+  <string name="identity_back_to_sign_in">返回登录</string>
+
+  <string name="identity_account_title">我的身份</string>
+  <string name="identity_short_id_label">短编号</string>
+  <string name="identity_role_admin">法厄同</string>
+  <string name="identity_role_agent">代理人</string>
+  <string name="identity_sign_out_action">退出登录</string>
+
+  <string name="identity_invites_title">邀请</string>
+  <string name="identity_invites_explain">生成一个一次性邀请码，交给你要邀请的人。</string>
+  <string name="identity_invites_create_action">生成邀请码</string>
+  <string name="identity_invites_created">邀请码</string>
+
+  <string name="identity_not_ready_title">本版未交付</string>
+  <string name="identity_not_ready_body">该区域不属于首版范围，在这里无法打开。</string>
+  <string name="identity_not_ready_signed_out">请先登录。</string>
+
+  <string name="identity_working">处理中…</string>
+  <string name="identity_unreachable">无法连接后端。</string>
+</resources>

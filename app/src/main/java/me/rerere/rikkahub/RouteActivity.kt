@@ -31,6 +31,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.semantics
@@ -60,6 +63,7 @@ import com.dokar.sonner.rememberToasterState
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.remote.AccountSession
 import me.rerere.rikkahub.data.db.DatabaseMigrationTracker
 import me.rerere.rikkahub.data.db.MigrationState
 import me.rerere.rikkahub.data.event.AppEvent
@@ -79,6 +83,13 @@ import me.rerere.rikkahub.ui.hooks.readBooleanPreference
 import me.rerere.rikkahub.ui.hooks.readStringPreference
 import me.rerere.rikkahub.ui.hooks.rememberCustomAsrState
 import me.rerere.rikkahub.ui.hooks.rememberCustomTtsState
+import me.rerere.rikkahub.ui.identity.IdentityAccessPolicy
+import me.rerere.rikkahub.ui.identity.IdentityAccountPage
+import me.rerere.rikkahub.ui.identity.IdentityDestination
+import me.rerere.rikkahub.ui.identity.IdentityNotReadyPage
+import me.rerere.rikkahub.ui.identity.IdentityRegisterPage
+import me.rerere.rikkahub.ui.identity.IdentityScope
+import me.rerere.rikkahub.ui.identity.IdentitySignInPage
 import me.rerere.rikkahub.ui.pages.assistant.AssistantPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantBasicPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantDetailPage
@@ -280,16 +291,23 @@ class RouteActivity : ComponentActivity() {
         }
         val migrationState by DatabaseMigrationTracker.state.collectAsStateWithLifecycle()
 
-        val startScreen = Screen.Chat(
-            id = if (readBooleanPreference("create_new_conversation_on_start", true)) {
-                Uuid.random().toString()
-            } else {
-                readStringPreference(
-                    "lastConversationId",
-                    Uuid.random().toString()
-                ) ?: Uuid.random().toString()
-            }
-        )
+        // Who this app is acting as. The session owns the truth; this revision
+        // counter is how a screen that has just signed in or out tells the gate
+        // to re-read it, since the session is not itself Compose state.
+        val session = koinInject<AccountSession>()
+        var identityRevision by remember { mutableIntStateOf(0) }
+        val identityUser = remember(identityRevision) { session.user }
+        LaunchedEffect(Unit) {
+            // A credential left from a previous run is re-established before the
+            // gate decides where to land, so a returning user is not asked to
+            // sign in again — and a credential the backend rejects is dropped.
+            session.restore()
+            identityRevision += 1
+        }
+
+        val identityScope = IdentityScope(signedIn = identityUser != null, isAdmin = identityUser?.isAdmin == true)
+
+        val startScreen: Screen = if (identityScope.signedIn) Screen.Account else Screen.SignIn
 
         val backStack = rememberNavBackStack(startScreen)
         SideEffect {
@@ -322,7 +340,15 @@ class RouteActivity : ComponentActivity() {
                         .semantics { testTagsAsResourceId = true }
                         .background(MaterialTheme.colorScheme.background)
                 ) {
-                    NavDisplay(
+                    // The gate sits in front of the whole destination table, not
+                    // inside individual entries: a screen whose area this release
+                    // does not deliver — including every legacy rikkahub screen,
+                    // which maps to no destination at all — never composes. That
+                    // is what makes the old local-execution and system-management
+                    // paths impassable instead of merely unlisted.
+                    val gated = (backStack.lastOrNull() as? Screen)?.toIdentityDestination()
+                    if (IdentityAccessPolicy.mayCompose(gated, identityScope)) {
+                        NavDisplay(
                         backStack = backStack,
                         entryDecorators = listOf(
                             rememberSaveableStateHolderNavEntryDecorator(),
@@ -346,6 +372,44 @@ class RouteActivity : ComponentActivity() {
                                 slideOutHorizontally { it }
                         },
                         entryProvider = entryProvider {
+                            entry<Screen.SignIn> {
+                                IdentitySignInPage(
+                                    onSignedIn = {
+                                        identityRevision += 1
+                                        backStack.clear()
+                                        backStack.add(Screen.Account)
+                                    },
+                                    onRegister = {
+                                        backStack.clear()
+                                        backStack.add(Screen.Register)
+                                    },
+                                )
+                            }
+
+                            entry<Screen.Register> {
+                                IdentityRegisterPage(
+                                    onRegistered = {
+                                        identityRevision += 1
+                                        backStack.clear()
+                                        backStack.add(Screen.Account)
+                                    },
+                                    onBackToSignIn = {
+                                        backStack.clear()
+                                        backStack.add(Screen.SignIn)
+                                    },
+                                )
+                            }
+
+                            entry<Screen.Account> {
+                                IdentityAccountPage(
+                                    onSignedOut = {
+                                        identityRevision += 1
+                                        backStack.clear()
+                                        backStack.add(Screen.SignIn)
+                                    },
+                                )
+                            }
+
                             entry<Screen.Chat>(
                                 metadata = NavDisplay.transitionSpec { fadeIn() togetherWith fadeOut() }
                                     + NavDisplay.popTransitionSpec { fadeIn() togetherWith fadeOut() }
@@ -575,7 +639,16 @@ class RouteActivity : ComponentActivity() {
                                 StatsPage()
                             }
                         }
-                    )
+                        )
+                    } else {
+                        IdentityNotReadyPage(
+                            identity = identityScope,
+                            onSignIn = {
+                                backStack.clear()
+                                backStack.add(Screen.SignIn)
+                            },
+                        )
+                    }
                     if (BuildConfig.DEBUG) {
                         Text(
                             text = "[开发模式]",
@@ -624,7 +697,38 @@ class RouteActivity : ComponentActivity() {
     }
 }
 
+/**
+ * Which delivered area a screen belongs to, or null when this gate does not
+ * know the screen.
+ *
+ * The `else` arm is the important one: every rikkahub screen this release does
+ * not deliver maps to no destination, and a screen with no destination is
+ * refused for every identity. Adding a screen to the product therefore does not
+ * accidentally make it reachable — landing its ticket has to add the mapping
+ * here on purpose.
+ */
+private fun Screen.toIdentityDestination(): IdentityDestination? = when (this) {
+    is Screen.SignIn -> IdentityDestination.SIGN_IN
+    is Screen.Register -> IdentityDestination.REGISTER
+    is Screen.Account -> IdentityDestination.ACCOUNT
+    else -> null
+}
+
 sealed interface Screen : NavKey {
+    /**
+     * The identity areas this release delivers. Everything else in this sealed
+     * interface belongs to a ticket that has not landed, so the gate in
+     * [AppRoutes] refuses it and composes the not-ready page instead.
+     */
+    @Serializable
+    data object SignIn : Screen
+
+    @Serializable
+    data object Register : Screen
+
+    @Serializable
+    data object Account : Screen
+
     @Serializable
     data class Chat(
         val id: String,
