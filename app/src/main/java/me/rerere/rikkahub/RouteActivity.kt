@@ -32,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -90,6 +91,7 @@ import me.rerere.rikkahub.ui.identity.IdentityNotReadyPage
 import me.rerere.rikkahub.ui.identity.IdentityRegisterPage
 import me.rerere.rikkahub.ui.identity.IdentityScope
 import me.rerere.rikkahub.ui.identity.IdentitySignInPage
+import me.rerere.rikkahub.ui.identity.identityStartScreen
 import me.rerere.rikkahub.ui.pages.assistant.AssistantPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantBasicPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantDetailPage
@@ -297,23 +299,44 @@ class RouteActivity : ComponentActivity() {
         val session = koinInject<AccountSession>()
         var identityRevision by remember { mutableIntStateOf(0) }
         val identityUser = remember(identityRevision) { session.user }
+        // Restoration is in flight until the session says otherwise. Nothing is
+        // judged before it answers, because nothing is known: a stack seeded
+        // now would point a returning user at sign-in, which their own restored
+        // credential then refuses.
+        var identitySettled by remember { mutableStateOf(false) }
         LaunchedEffect(Unit) {
             // A credential left from a previous run is re-established before the
             // gate decides where to land, so a returning user is not asked to
             // sign in again — and a credential the backend rejects is dropped.
-            session.restore()
-            identityRevision += 1
+            try {
+                session.restore()
+            } finally {
+                identityRevision += 1
+                identitySettled = true
+            }
         }
 
         val identityScope = IdentityScope(signedIn = identityUser != null, isAdmin = identityUser?.isAdmin == true)
 
-        val startScreen: Screen = if (identityScope.signedIn) Screen.Account else Screen.SignIn
+        val startScreen = identityStartScreen(identityScope)
 
         val backStack = rememberNavBackStack(startScreen)
         SideEffect {
             navStack = backStack
             while (pendingIntents.isNotEmpty()) {
                 handleIntent(pendingIntents.removeFirst())
+            }
+        }
+        SideEffect {
+            // The session is the only authority on who is signing in, so when it
+            // changes, the screen this stack points at may no longer be one this
+            // identity may compose. Move it to where this identity actually
+            // lands rather than stranding it on the not-ready page.
+            if (!identitySettled) return@SideEffect
+            val selected = (backStack.lastOrNull() as? Screen)?.toIdentityDestination()
+            if (!IdentityAccessPolicy.mayCompose(selected, identityScope)) {
+                backStack.clear()
+                backStack.add(identityStartScreen(identityScope))
             }
         }
 
@@ -347,7 +370,14 @@ class RouteActivity : ComponentActivity() {
                     // is what makes the old local-execution and system-management
                     // paths impassable instead of merely unlisted.
                     val gated = (backStack.lastOrNull() as? Screen)?.toIdentityDestination()
-                    if (IdentityAccessPolicy.mayCompose(gated, identityScope)) {
+                    when {
+                        // The session has not said yet who this app is, so there is
+                        // nothing to judge and nowhere to land.
+                        !identitySettled -> CircularProgressIndicator(
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+
+                        IdentityAccessPolicy.mayCompose(gated, identityScope) -> {
                         NavDisplay(
                         backStack = backStack,
                         entryDecorators = listOf(
@@ -640,7 +670,7 @@ class RouteActivity : ComponentActivity() {
                             }
                         }
                         )
-                    } else {
+                    } else -> {
                         IdentityNotReadyPage(
                             identity = identityScope,
                             onSignIn = {
@@ -648,6 +678,7 @@ class RouteActivity : ComponentActivity() {
                                 backStack.add(Screen.SignIn)
                             },
                         )
+                    }
                     }
                     if (BuildConfig.DEBUG) {
                         Text(

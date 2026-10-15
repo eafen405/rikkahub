@@ -80,6 +80,26 @@ Technology stack documentation:
 > [!TIP]
 > You need a `google-services.json` file at `app` folder to build the app.
 
+### Pointing a build at a backend
+
+The identity sign-in backend address is deployment input, so it is supplied to the build rather than
+written in source. Debug builds default to `http://10.0.2.2:3080`, which is a backend running on your
+own machine as seen from an Android emulator. Anything else — a phone on the same network, or a
+deployed domain — must be given explicitly:
+
+```bash
+# LAN address, for a phone on the same network as the backend
+./gradlew assembleDebug -Pourfairy.identityEndpoint=http://192.168.1.20:3080
+
+# deployed domain, for a release
+./gradlew assembleRelease -Pourfairy.identityEndpoint=https://ourfairy.example.com
+```
+
+A release build requested without the property fails rather than shipping the emulator address. The
+value must be an `http://` or `https://` URL and is compiled into
+`BuildConfig.IDENTITY_ENDPOINT`; a build that ends up with no address at all refuses to start rather
+than dialling a machine-local loopback from a real device.
+
 ## 💰 Donate
 
 * [Patreon](https://patreon.com/rikkahub)
