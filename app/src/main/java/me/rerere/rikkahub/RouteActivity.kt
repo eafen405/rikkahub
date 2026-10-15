@@ -752,6 +752,7 @@ sealed interface Screen : NavKey {
     data object Account : Screen
 
     /** This account's remote sessions: list, create, choose, return to main. */
+    @Serializable
     data object Sessions : Screen
 
     @Serializable

@@ -1,6 +1,10 @@
 package me.rerere.rikkahub.ui.identity
 
 import androidx.navigation3.runtime.NavKey
+import androidx.navigation3.runtime.NavBackStack
+import androidx.navigation3.runtime.serialization.NavBackStackSerializer
+import androidx.navigation3.runtime.serialization.NavKeySerializer
+import kotlinx.serialization.json.Json
 import me.rerere.rikkahub.Screen
 import me.rerere.rikkahub.data.remote.AccountSession
 import me.rerere.rikkahub.data.remote.CredentialStore
@@ -25,6 +29,15 @@ import org.junit.Test
  * against a real session whose backend answers only when the test releases it.
  */
 class IdentityNavigationTest {
+
+    @Test
+    fun `sessions destination survives the navigation library back stack save and restore`() {
+        val serializer = NavBackStackSerializer(NavKeySerializer<NavKey>())
+        val original = NavBackStack<NavKey>(Screen.Account, Screen.Sessions)
+        val saved = Json.encodeToString(serializer, original)
+        val restored = Json.decodeFromString(serializer, saved)
+        assertEquals(listOf(Screen.Account, Screen.Sessions), restored.toList())
+    }
 
     /** A credential the device already holds, or none at all. */
     private class StoredCredential(private val token: String?) : CredentialStore {

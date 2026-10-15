@@ -208,6 +208,46 @@ class RemoteChatRecoveryTest {
         assertNull(state.snapshot.value.pending)
         assertFalse(state.snapshot.value.sending)
     }
+    @Test fun `recovered generation replaces observed unsaved event with interrupted closer without losing pending or W`() = runTest {
+        val key=ChatSyncKey("https://fairy",1,"s")
+        val pending=StoredChatSend("stable-request","not yet confirmed")
+        val store=Store().apply { records[key]=ChatSyncRecord(0,true,pending) }
+        val backend=Backend().apply { ack=0 }
+        val state=RemoteChatState(backend,backgroundScope,store,"https://fairy")
+        state.bind("alice","s",1);runCurrent()
+        backend.flow.emit(projection(0,1).copy(generation="old-agent",messages=listOf(message(1).copy(text="unsaved"))));runCurrent()
+        assertEquals(0L,state.snapshot.value.consumedThrough)
+        state.detach();state.bind("rotated-token","s",1);runCurrent()
+        backend.ack=1
+        val closer=Json.parseToJsonElement("""{"seq":1,"type":"turn/end","status":"interrupted"}""") as JsonObject
+        backend.flow.emit(projection(0,1).copy(generation="recovered-agent",events=listOf(event(0),closer),
+            messages=listOf(message(1).copy(text="recovered partial",status=3))));runCurrent()
+        assertTrue(state.snapshot.value.connected)
+        assertNull(state.snapshot.value.failure)
+        assertEquals("recovered-agent",state.snapshot.value.projection?.generation)
+        assertEquals(listOf("recovered partial"),state.snapshot.value.projection?.messages?.map { it.text })
+        assertEquals(1L,state.snapshot.value.consumedThrough)
+        assertEquals("stable-request",state.snapshot.value.pending?.requestId)
+        assertEquals(pending,store.records[key]?.pending)
+    }
+    @Test fun `shorter new generation removes orphan bubbles and refills body despite saved consumption`() = runTest {
+        val key=ChatSyncKey("https://fairy",1,"s")
+        val store=Store().apply { records[key]=ChatSyncRecord(0,true) };val backend=Backend().apply { ack=0 }
+        val state=RemoteChatState(backend,backgroundScope,store,"https://fairy")
+        state.bind("alice","s",1);runCurrent();backend.flow.emit(projection(0,3).copy(generation="old"));runCurrent()
+        state.detach();state.bind("alice","s",1);runCurrent()
+        backend.flow.emit(projection(0,0).copy(generation="new",messages=listOf(message(0).copy(text="saved body"))));runCurrent()
+        assertTrue(state.snapshot.value.connected)
+        assertEquals(listOf("saved body"),state.snapshot.value.projection?.messages?.map { it.text })
+        assertEquals(0L,state.snapshot.value.consumedThrough)
+        assertFalse(state.snapshot.value.syncing)
+        // Same generation corruption remains rejected after the generation reset.
+        val conflict=Json.parseToJsonElement("""{"seq":0,"type":"conflict"}""") as JsonObject
+        backend.flow.emit(projection(0,0,2).copy(generation="new",events=listOf(conflict)));runCurrent()
+        assertFalse(state.snapshot.value.connected)
+        assertEquals(listOf("saved body"),state.snapshot.value.projection?.messages?.map { it.text })
+        assertNotNull(state.snapshot.value.failure)
+    }
     companion object {
         fun event(seq:Long):JsonObject=Json.parseToJsonElement("""{"seq":$seq,"type":"fact","payload":"$seq"}""") as JsonObject
         fun message(seq:Long)=RemoteChatMessage("m$seq",seq,null,2,2,"body$seq")

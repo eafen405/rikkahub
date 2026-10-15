@@ -101,7 +101,17 @@ class RemoteChatState(
                         if (!current(boundEpoch, opened) || projection.sessionId != selected.sessionId) return@collect
                         val previous = mutable.value.projection
                         if (previous?.generation == projection.generation && projection.version < previous.version) return@collect
-                        if (first) {
+                        val newGeneration = previous != null && previous.generation != projection.generation
+                        if (newGeneration) {
+                            // A recovered Agent may replace an observed, unflushed tail at the same seq.
+                            // Rebuild derived content; keep the saved consumption/pending record.
+                            events.clear()
+                            messages.clear()
+                            mutable.value = mutable.value.copy(projection = null, batch = null)
+                            synchronization?.cancel()
+                            synchronization = null
+                        }
+                        if (first || newGeneration) {
                             cut = projection.throughSeq
                             before = projection.fromSeq
                             first = false
@@ -150,13 +160,15 @@ class RemoteChatState(
 
     private fun scheduleSync(boundEpoch: Long, opened: Long, credential: String, selected: ChatSyncKey) {
         if (synchronization?.isActive == true) return
+        val generation = mutable.value.projection?.generation
+        fun currentGeneration() = current(boundEpoch, opened) && mutable.value.projection?.generation == generation
         synchronization = scope.launch {
             try {
                 mutable.value = mutable.value.copy(syncing = true, failure = null)
                 while (before > 0 && !covered(before - 1)) {
                     val requestedBefore = before
                     val page = backend.page(credential, selected.sessionId, cut, requestedBefore)
-                    if (!current(boundEpoch, opened)) return@launch
+                    if (!currentGeneration()) return@launch
                     require(page.sessionId == selected.sessionId && page.throughSeq == cut) { "历史页不属于当前恢复截点" }
                     require(page.fromSeq < requestedBefore && page.fromSeq >= 0) { "历史页没有向前推进" }
                     mergeEvents(page.events, page.fromSeq, requestedBefore)
@@ -167,9 +179,9 @@ class RemoteChatState(
                     before = page.fromSeq
                     mutable.value = mutable.value.copy(projection = mutable.value.projection?.copy(messages = orderedMessages()))
                 }
-                if (!current(boundEpoch, opened)) return@launch
+                if (!currentGeneration()) return@launch
                 val acknowledged = backend.checkpoint(credential, selected.sessionId)
-                if (!current(boundEpoch, opened)) return@launch
+                if (!currentGeneration()) return@launch
                 val latest = mutable.value.projection ?: return@launch
                 val target = minOf(latest.cursor, acknowledged)
                 require(covered(target)) { "历史范围尚未完整补齐" }
@@ -178,7 +190,7 @@ class RemoteChatState(
                     val saved = update(selected) { record ->
                         record.copy(consumedThrough = maxOf(record.consumedThrough, target), initialized = true)
                     }
-                    if (!current(boundEpoch, opened)) return@launch
+                    if (!currentGeneration()) return@launch
                     mutable.value = mutable.value.copy(
                         consumedThrough = saved.consumedThrough, initialized = true,
                         batch = ChatConsumptionBatch(selected, latest.generation, old.consumedThrough, saved.consumedThrough, !old.initialized),
@@ -187,23 +199,23 @@ class RemoteChatState(
                 val pending = load(selected).pending
                 if (pending != null && latest.messages.any { it.requestId == pending.requestId && it.seq <= acknowledged }) {
                     clearPending(selected, pending.requestId)
-                    if (!current(boundEpoch, opened)) return@launch
+                    if (!currentGeneration()) return@launch
                     showPending(selected)
                 }
-                if (current(boundEpoch, opened)) mutable.value = mutable.value.copy(
+                if (currentGeneration()) mutable.value = mutable.value.copy(
                     syncing = mutable.value.consumedThrough < (mutable.value.projection?.cursor ?: -1),
                     projection = mutable.value.projection?.copy(durableThroughSeq = maxOf(latest.durableThroughSeq, acknowledged)),
                 )
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
-                if (current(boundEpoch, opened)) mutable.value = mutable.value.copy(syncing = true, failure = failure.description())
+                if (currentGeneration()) mutable.value = mutable.value.copy(syncing = true, failure = failure.description())
             } finally {
                 // Live facts can arrive while the local commit is awaiting disk. Retry that remaining prefix.
-                if (current(boundEpoch, opened) && mutable.value.connected && mutable.value.syncing) {
+                if (currentGeneration() && mutable.value.connected && mutable.value.syncing) {
                     scope.launch {
                         delay(retryDelayMillis)
-                        if (current(boundEpoch, opened) && mutable.value.connected && mutable.value.syncing) {
+                        if (currentGeneration() && mutable.value.connected && mutable.value.syncing) {
                             scheduleSync(boundEpoch, opened, credential, selected)
                         }
                     }
