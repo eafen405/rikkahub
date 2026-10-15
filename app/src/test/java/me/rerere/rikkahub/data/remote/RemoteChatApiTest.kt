@@ -262,6 +262,30 @@ class RemoteChatApiTest {
         assertEquals(3L, projection.attempt?.revision)
     }
 
+    @Test
+    fun `a committed delivery decodes beside an independent running attempt`() = runTest {
+        reply(200, """{"ok":true,"projection":$DELIVERED_SNAPSHOT}""")
+
+        val projection = api.read(TOKEN, "s-1")
+
+        // A delivery is an ordinary committed Fairy message: role 2, status 2,
+        // Markdown text, no attachment list. It needs no field the client does
+        // not already decode.
+        val delivered = projection.messages.single()
+        assertEquals("d-1", delivered.messageId)
+        assertEquals(DELIVERED_TEXT, delivered.text)
+        assertEquals(2, delivered.role)
+        assertEquals(2, delivered.status)
+        assertTrue(delivered.attachments.isEmpty())
+        // The attempt in flight is a second, independent fact of the same
+        // snapshot: it keeps its own identity and its own text, and neither
+        // entry absorbs the other.
+        val attempt = projection.attempt!!
+        assertEquals("a-2", attempt.attemptId)
+        assertEquals("still composing", attempt.text)
+        assertEquals(4L, attempt.revision)
+    }
+
     // ---- stopping ----
 
     @Test
@@ -437,6 +461,9 @@ class RemoteChatApiTest {
         const val TOKEN = "cred-alice"
         const val TEXT = "  hello\n\tworld  "
 
+        /** Markdown exactly as the native side stored it, trailing spaces and all. */
+        const val DELIVERED_TEXT = "# Saved\n\n**bold** body  "
+
         /** A reply still being produced, with exact original text, Markdown and one attachment. */
         const val FIRST_SNAPSHOT =
             """{"sessionId":"s-1","generation":"gen-1","version":1,"cursor":1,"durableThroughSeq":-1,""" +
@@ -450,5 +477,11 @@ class RemoteChatApiTest {
                 """"messages":[{"messageId":"m-1","seq":1,"requestId":"r-1","role":1,"status":2,"text":"  hello\n\tworld  "},""" +
                 """{"messageId":"m-2","seq":2,"requestId":"r-1","role":2,"status":3,"text":"\n  second  \n"}],""" +
                 """"attempt":null,"replyStatus":0,"error":null}"""
+
+        /** A committed Fairy delivery beside an independent running attempt. */
+        const val DELIVERED_SNAPSHOT =
+            """{"sessionId":"s-1","generation":"gen-1","version":4,"cursor":2,"durableThroughSeq":2,""" +
+                """"messages":[{"messageId":"d-1","seq":2,"role":2,"status":2,"text":"# Saved\n\n**bold** body  ","attachments":[]}],""" +
+                """"attempt":{"attemptId":"a-2","revision":4,"text":"still composing"},"replyStatus":1,"error":null}"""
     }
 }

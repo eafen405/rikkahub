@@ -59,6 +59,49 @@ class RemoteChatStateTest {
         assertEquals(RemoteMessageFormat.PLAIN, remoteAttemptFormat())
     }
 
+    @Test fun `a committed delivery and a still running attempt stay independent`() = runTest {
+        // The delivery is the next event after the connection's fixed cut, so the
+        // writer acknowledgement has to cover its sequence or the batch never settles.
+        val backend = Backend().apply { ack = 8 }
+        val state = RemoteChatState(backend, backgroundScope, MemoryChatSyncStore(), "https://fairy")
+        state.bind("alice", "s1", 1)
+        runCurrent()
+        runCurrent()
+        val flow = backend.events.getValue("alice/s1")
+        val delivery = RemoteChatMessage("d-1", 8, null, 2, 2, DELIVERED_TEXT)
+        // Same delivery, same raw coverage of seq 0..8, only the attempt text moves.
+        fun committed(version: Long, attempt: RemoteChatAttempt) =
+            projection("s1", version, attempt).copy(
+                cursor = 8, events = (0L..8L).map(RemoteChatRecoveryTest::event),
+                messages = listOf(delivery),
+            )
+
+        flow.emit(projection("s1", 1, RemoteChatAttempt("a1", 1, "draft")))
+        runCurrent()
+        assertEquals("draft", state.snapshot.value.projection?.attempt?.text)
+        flow.emit(committed(2, RemoteChatAttempt("a1", 2, "draft **bold**")))
+        runCurrent()
+        flow.emit(committed(3, RemoteChatAttempt("a1", 3, "draft **bold** body")))
+        runCurrent()
+
+        assertNull(state.snapshot.value.failure)
+        // The delivery is one message, repeated in every later snapshot, not three.
+        val view = state.snapshot.value.projection!!
+        val message = view.messages.single()
+        assertEquals("d-1", message.messageId)
+        assertEquals(DELIVERED_TEXT, message.text)
+        assertEquals(2, message.role)
+        assertEquals(2, message.status)
+        // The attempt keeps its own identity and only ever the newest cumulative text.
+        val attempt = view.attempt!!
+        assertEquals("a1", attempt.attemptId)
+        assertEquals(3L, attempt.revision)
+        assertEquals("draft **bold** body", attempt.text)
+        assertEquals(RemoteMessageFormat.MARKDOWN, remoteMessageFormat(message))
+        assertEquals(RemoteMessageFormat.PLAIN, remoteAttemptFormat())
+        assertEquals(8L, state.snapshot.value.consumedThrough)
+    }
+
     @Test fun `unknown acceptance retains request identity and explicit retry uses identical bytes`() = runTest {
         val backend = Backend().apply { failure = IdentityUnreachable(java.io.IOException("lost")) }
         val state = RemoteChatState(backend, backgroundScope, MemoryChatSyncStore(), "https://fairy")
@@ -192,6 +235,9 @@ class RemoteChatStateTest {
     }
 
     companion object {
+        /** Markdown body a committed Fairy delivery carries, byte for byte. */
+        const val DELIVERED_TEXT = "# Saved\n\n**bold** body  "
+
         fun projection(id: String, version: Long = 0, attempt: RemoteChatAttempt? = null) =
             RemoteChatProjection(id, "g1", version, 7, 7, emptyList(), attempt, if (attempt == null) 0 else 1, null,
                 7, 0, (0L..7L).map(RemoteChatRecoveryTest::event))
