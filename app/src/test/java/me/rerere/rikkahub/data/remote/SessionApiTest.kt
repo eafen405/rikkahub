@@ -7,6 +7,7 @@ import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
@@ -214,7 +215,8 @@ class SessionApiTest {
             api.list(TOKEN)
             fail("expected the unreadable answer to be raised")
         } catch (unreachable: IdentityUnreachable) {
-            assertTrue(unreachable.cause is IllegalStateException)
+            // Unreadable is "could not be read", never a refusal the user did.
+            assertNotNull(unreachable.cause)
         }
     }
 

@@ -1,10 +1,10 @@
 package me.rerere.rikkahub.data.remote
 
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /**
  * What the sessions page is currently showing.
@@ -27,152 +27,130 @@ data class SessionsSnapshot(
  * is the current one.
  *
  * The rule enforced here is the same one [AccountSession] enforces for the
- * account itself, and it exists because the phone is a hostile place for it: a
- * list that was asked for as Alice must never appear after the app has become
- * Bob's, even if Alice's answer was already on its way. So every attempt carries
- * a generation taken when the credential was bound, and an answer is applied
- * only while its generation is still current.
+ * account itself: a list that was asked for as Alice must never appear after the
+ * app has become Bob's, even if Alice's answer was already on its way. So
+ * [bind] retires every attempt made under the previous credential by moving an
+ * epoch forward, and an answer is adopted only while its own epoch is still
+ * current. Cancellation is not the guarantee — the bytes may already be on the
+ * way — the epoch is.
  *
- * Two independent mechanisms, because they fail differently:
+ * [snapshot] is the single authoritative view of this state and it is a
+ * [StateFlow], so the page that renders it recomposes on its own; there is no
+ * second copy and no polling.
  *
- *  * **Cancellation** — rebinding drops the work in flight, so the usual answer
- *    never arrives at all.
- *  * **A generation check** — the answer still arrives, because the backend is
- *    outside our control and may already have written the bytes. Cancellation is
- *    an optimisation; the generation is the guarantee, and it is what the tests
- *    exercise against a backend that deliberately ignores cancellation.
- *
- * This is deliberately page-scoped state and nothing more. There is no cache to
- * be authoritative, no second identity to disagree with [AccountSession], and
- * no framework: [bind] takes the credential it is allowed to use, and it takes
- * none of anything else.
+ * There is no second identity here: [bind] takes the credential it is allowed
+ * to act as, and it takes no identity of its own to disagree with
+ * [AccountSession].
  */
-class OwnedSessionState(private val backend: SessionBackend) {
+class OwnedSessionState(
+    private val backend: SessionBackend,
+    private val scope: CoroutineScope,
+) {
 
-    private val mutex = Mutex()
+    private val _snapshot = MutableStateFlow(SessionsSnapshot())
 
-    @Volatile
-    private var generation = 0L
+    /** The one authoritative snapshot; the page collects this and nothing else. */
+    val snapshot: StateFlow<SessionsSnapshot> = _snapshot.asStateFlow()
 
-    @Volatile
-    private var token: String? = null
-
-    private var work: Job? = null
-
-    var snapshot: SessionsSnapshot = SessionsSnapshot()
-        private set
+    /**
+     * Retired by every [bind], so an answer asked for under a previous
+     * credential is recognisable when it lands. Read and written only on the
+     * scope's own dispatcher, which is why no lock is needed.
+     */
+    private var epoch = 0L
+    private var bound: String? = null
 
     /**
      * Attach the credential this state may act as, discarding whatever the
      * previous one was allowed to see.
      *
-     * Called on first composition and again whenever the account changes — a new
-     * sign-in, a sign-out, a restore that lands on a different identity — so the
-     * list and the selection are gone the instant the account is, not when the
-     * next list happens to arrive.
+     * Called whenever the account changes — a new sign-in, a sign-out, a restore
+     * that lands on a different identity — so the list and the selection are
+     * gone the instant the account is, not when the next list happens to arrive.
      */
     fun bind(credential: String?) {
-        if (credential == token) return
-        work?.cancel()
-        work = null
-        token = credential
-        generation += 1
-        snapshot = SessionsSnapshot()
+        if (credential == bound) return
+        bound = credential
+        epoch += 1
+        _snapshot.value = SessionsSnapshot()
     }
 
-    /** The credential currently bound, if any. */
-    val credential: String? get() = token
-
-    fun refresh(scope: CoroutineScope) = start(scope) { attempt, token ->
+    fun refresh() = request { token, current ->
         val listed = backend.list(token)
-        attempt {
-            snapshot = snapshot.copy(
-                sessions = listed.sessions,
-                primarySessionId = listed.primarySessionId,
-                loading = false,
-                failure = null,
-                // A selection that the backend's list does not contain is not a
-                // selection this account may keep.
-                selectedId = snapshot.selectedId?.takeIf { it in listed.sessions.map(OwnedSession::id) }
-                    ?: listed.primarySessionId,
-            )
-        }
+        current.copy(
+            sessions = listed.sessions,
+            primarySessionId = listed.primarySessionId ?: current.primarySessionId,
+            // A selection this account's own list does not contain is not a
+            // selection it may keep; main is the standing default.
+            selectedId = current.selectedId?.takeIf { chosen ->
+                listed.sessions.any { owned -> owned.id == chosen }
+            } ?: listed.primarySessionId,
+        )
     }
 
-    fun create(scope: CoroutineScope) = start(scope) { attempt, token ->
-        val created = backend.create(token)
-        attempt {
-            snapshot = snapshot.copy(sessions = snapshot.sessions + created, loading = false, failure = null)
-        }
+    fun create() = request { token, current ->
+        current.joined(backend.create(token), stand = true)
     }
 
-    fun select(scope: CoroutineScope, sessionId: String) = start(scope) { attempt, token ->
-        val chosen = backend.select(token, sessionId)
-        attempt {
-            snapshot = snapshot.copy(selectedId = chosen.id, loading = false, failure = null)
-        }
+    fun select(sessionId: String) = request { token, current ->
+        current.joined(backend.select(token, sessionId), stand = true)
     }
 
     /** Return to the account's permanent main session. */
-    fun returnToPrimary(scope: CoroutineScope) = start(scope) { attempt, token ->
-        val primary = backend.primary(token)
-        attempt {
-            snapshot = snapshot.copy(selectedId = primary.id, loading = false, failure = null)
-        }
+    fun returnToPrimary() = request { token, current ->
+        current.joined(backend.primary(token), stand = true)
     }
 
-    fun read(scope: CoroutineScope, sessionId: String) = start(scope) { attempt, token ->
-        val read = backend.read(token, sessionId)
-        attempt {
-            snapshot = snapshot.copy(
-                selectedId = read.id,
-                primarySessionId = read.primary.takeIf { it } ?: snapshot.primarySessionId,
-                loading = false,
-                failure = null,
-            )
-        }
+    fun read(sessionId: String) = request { token, current ->
+        current.joined(backend.read(token, sessionId), stand = true)
     }
+
+    /**
+     * Fold one session the backend named into the snapshot.
+     *
+     * A session the backend has just named is one this account owns, so it joins
+     * the list even when no list has arrived yet — that is what makes a first
+     * create or a first return-to-main show up instead of leaving the page
+     * looking empty. [stand] marks it as the session the user is now in, and
+     * main is recorded only the first time one is seen: an ordinary create or
+     * choice must not move the account's permanent main.
+     */
+    private fun SessionsSnapshot.joined(named: OwnedSession, stand: Boolean) = copy(
+        sessions = if (sessions.any { it.id == named.id }) {
+            sessions.map { if (it.id == named.id) named else it }
+        } else {
+            sessions + named
+        },
+        primarySessionId = primarySessionId ?: named.id.takeIf { named.primary },
+        selectedId = if (stand) named.id else selectedId,
+    )
 
     /**
      * Run one request as the currently bound account, if there still is one.
      *
-     * [onStale] is what a late answer from a replaced account must NOT do. It is
-     * given to the caller so the answer can be discarded without touching state,
-     * which is the whole point: applying it would publish one account's sessions
-     * under another's name.
+     * The answer is folded into the snapshot at the moment it lands rather than
+     * when it was asked for, so the page always shows the newest settled state.
      */
-    private fun start(
-        scope: CoroutineScope,
-        operation: suspend (attempt: ((() -> Unit)?) -> Unit, token: String) -> Unit,
-    ) {
-        val token = token ?: return
-        val attemptGeneration = generation
+    private fun request(operation: suspend (String, SessionsSnapshot) -> SessionsSnapshot) {
+        val token = bound ?: return
+        val started = epoch
+        _snapshot.value = _snapshot.value.copy(loading = true, failure = null)
         scope.launch {
-            val loading = mutex.withLock {
-                if (attemptGeneration != generation) return@launch
-                work = coroutineContext[Job]
-                snapshot = snapshot.copy(loading = true, failure = null)
-            }
-            try {
-                operation(
-                    { change ->
-                        mutex.withLock {
-                            if (attemptGeneration == generation) change()
-                        }
-                    },
-                    token,
-                )
+            val settled = try {
+                operation(token, _snapshot.value)
             } catch (refused: IdentityRefused) {
-                attemptGeneration.whileCurrent {
-                    snapshot = snapshot.copy(loading = false, failure = refused.message ?: refused.code)
-                }
+                if (started != epoch) return@launch
+                _snapshot.value = _snapshot.value.settled(failure = refused.message ?: refused.code)
+                return@launch
             } catch (unreachable: IdentityUnreachable) {
-                attemptGeneration.whileCurrent { snapshot = snapshot.copy(loading = false) }
+                if (started != epoch) return@launch
+                _snapshot.value = _snapshot.value.settled()
+                return@launch
             }
+            if (started == epoch) _snapshot.value = settled.settled()
         }
     }
 
-    private inline fun Long.whileCurrent(change: () -> Unit) {
-        if (this == generation) change()
-    }
+    private fun SessionsSnapshot.settled(failure: String? = null) =
+        copy(loading = false, failure = failure)
 }

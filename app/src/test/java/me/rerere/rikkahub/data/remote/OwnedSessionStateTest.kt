@@ -29,7 +29,7 @@ private class DeferredBackend : SessionBackend {
     val seenTokens = mutableListOf<String>()
 
     override suspend fun list(token: String): OwnedSessions {
-        await()
+        await(token)
         return OwnedSessions(
             sessions = listOf(OwnedSession(id = "s-$token", owner = "user:$token", primary = true)),
             primarySessionId = "s-$token",
@@ -37,26 +37,29 @@ private class DeferredBackend : SessionBackend {
     }
 
     override suspend fun create(token: String): OwnedSession {
-        await()
-        return OwnedSession(id = "new-$token", owner = "user:$token")
+        await(token)
+        // A first session is the account's main, which is exactly the case that
+        // must show up on the page without waiting for a list.
+        return OwnedSession(id = "new-$token", owner = "user:$token", primary = true)
     }
 
     override suspend fun select(token: String, sessionId: String): OwnedSession {
-        await()
+        await(token)
         return OwnedSession(id = sessionId, owner = "user:$token")
     }
 
     override suspend fun primary(token: String): OwnedSession {
-        await()
+        await(token)
         return OwnedSession(id = "s-$token", owner = "user:$token", primary = true)
     }
 
     override suspend fun read(token: String, sessionId: String): OwnedSession {
-        await()
+        await(token)
         return OwnedSession(id = sessionId, owner = "user:$token")
     }
 
-    private suspend fun await() {
+    private suspend fun await(token: String) {
+        seenTokens += token
         withContext(NonCancellable) { gate.await() }
     }
 }
@@ -67,108 +70,112 @@ class OwnedSessionStateTest {
     @Test
     fun `the list shows what the backend said`() = runTest {
         val backend = DeferredBackend()
-        val state = OwnedSessionState(backend)
+        val state = OwnedSessionState(backend, this)
         backend.gate.complete(Unit)
 
         state.bind("alice")
-        state.refresh(backgroundScope)
+        state.refresh()
         advanceUntilIdle()
 
-        assertEquals(listOf("s-alice"), state.snapshot.sessions.map { it.id })
-        assertEquals("s-alice", state.snapshot.primarySessionId)
+        assertEquals(listOf("s-alice"), state.snapshot.value.sessions.map { it.id })
+        assertEquals("s-alice", state.snapshot.value.primarySessionId)
     }
 
     @Test
     fun `choosing a session shows that one as the current session`() = runTest {
         val backend = DeferredBackend()
-        val state = OwnedSessionState(backend)
+        val state = OwnedSessionState(backend, this)
         backend.gate.complete(Unit)
 
         state.bind("alice")
-        state.select(backgroundScope, "s-2")
+        state.select("s-2")
         advanceUntilIdle()
 
-        assertEquals("s-2", state.snapshot.selectedId)
+        assertEquals("s-2", state.snapshot.value.selectedId)
     }
 
     @Test
     fun `returning to the main session does not change which one the account owns`() = runTest {
         val backend = DeferredBackend()
-        val state = OwnedSessionState(backend)
+        val state = OwnedSessionState(backend, this)
         backend.gate.complete(Unit)
 
         state.bind("alice")
-        state.select(backgroundScope, "s-2")
+        state.refresh()
         advanceUntilIdle()
-        val primaryBefore = state.snapshot.primarySessionId
-
-        state.returnToPrimary(backgroundScope)
+        state.select("s-2")
         advanceUntilIdle()
 
-        assertEquals(primaryBefore, state.snapshot.primarySessionId)
-        assertEquals("s-alice", state.snapshot.selectedId)
+        state.returnToPrimary()
+        advanceUntilIdle()
+
+        assertEquals("s-alice", state.snapshot.value.primarySessionId)
+        assertEquals("s-alice", state.snapshot.value.selectedId)
     }
 
     @Test
     fun `a list that arrives after the account changed is not shown to the new account`() = runTest {
         val backend = DeferredBackend()
-        val state = OwnedSessionState(backend)
+        val state = OwnedSessionState(backend, this)
 
         state.bind("alice")
-        state.refresh(backgroundScope)
+        state.refresh()
         advanceUntilIdle()
 
         // Alice is signed out and Bob signs in while Alice's list is still in
         // flight. The page is empty at once…
         state.bind("bob")
-        assertEquals(emptyList<OwnedSession>(), state.snapshot.sessions)
-        assertNull(state.snapshot.selectedId)
+        assertEquals(emptyList<OwnedSession>(), state.snapshot.value.sessions)
+        assertNull(state.snapshot.value.selectedId)
 
         // …and Alice's answer, which the backend sends anyway, changes nothing.
         backend.gate.complete(Unit)
         advanceUntilIdle()
 
-        assertEquals(emptyList<OwnedSession>(), state.snapshot.sessions)
-        assertNull(state.snapshot.primarySessionId)
-        assertNull(state.snapshot.selectedId)
+        assertEquals(emptyList<OwnedSession>(), state.snapshot.value.sessions)
+        assertNull(state.snapshot.value.primarySessionId)
+        assertNull(state.snapshot.value.selectedId)
     }
 
     @Test
     fun `a selection made as one account is gone once another signs in`() = runTest {
         val backend = DeferredBackend()
-        val state = OwnedSessionState(backend)
+        val state = OwnedSessionState(backend, this)
         backend.gate.complete(Unit)
 
         state.bind("alice")
-        state.select(backgroundScope, "s-secret")
+        state.select("s-secret")
         advanceUntilIdle()
-        assertEquals("s-secret", state.snapshot.selectedId)
+        assertEquals("s-secret", state.snapshot.value.selectedId)
 
         state.bind("bob")
-        state.refresh(backgroundScope)
+        state.refresh()
         advanceUntilIdle()
 
-        assertNull(state.snapshot.selectedId)
-        assertEquals(listOf("s-bob"), state.snapshot.sessions.map { it.id })
+        // Alice's choice is gone: Bob stands in his own main, and nothing of
+        // hers is left anywhere on the page.
+        assertEquals("s-bob", state.snapshot.value.selectedId)
+        assertEquals(listOf("s-bob"), state.snapshot.value.sessions.map { it.id })
+        assertTrue("s-secret" !in state.snapshot.value.sessions.map { it.id })
     }
 
     @Test
     fun `signing out empties the page and refuses to ask for anything`() = runTest {
         val backend = DeferredBackend()
-        val state = OwnedSessionState(backend)
+        val state = OwnedSessionState(backend, this)
         backend.gate.complete(Unit)
 
         state.bind("alice")
-        state.refresh(backgroundScope)
+        state.refresh()
         advanceUntilIdle()
 
         state.bind(null)
-        state.refresh(backgroundScope)
-        state.create(backgroundScope)
+        state.refresh()
+        state.create()
         advanceUntilIdle()
 
-        assertEquals(emptyList<OwnedSession>(), state.snapshot.sessions)
-        assertNull(state.snapshot.selectedId)
+        assertEquals(emptyList<OwnedSession>(), state.snapshot.value.sessions)
+        assertNull(state.snapshot.value.selectedId)
         // One credential, used as itself: nothing was ever asked for as a user.
         assertEquals(listOf("alice"), backend.seenTokens)
     }
@@ -176,17 +183,64 @@ class OwnedSessionStateTest {
     @Test
     fun `a selection the account's own list does not contain is not kept`() = runTest {
         val backend = DeferredBackend()
-        val state = OwnedSessionState(backend)
+        val state = OwnedSessionState(backend, this)
         backend.gate.complete(Unit)
 
         state.bind("alice")
-        state.select(backgroundScope, "s-elsewhere")
+        state.select("s-elsewhere")
         advanceUntilIdle()
 
-        state.refresh(backgroundScope)
+        state.refresh()
         advanceUntilIdle()
 
-        assertTrue("s-elsewhere" !in state.snapshot.sessions.map { it.id })
-        assertEquals("s-alice", state.snapshot.selectedId)
+        assertTrue("s-elsewhere" !in state.snapshot.value.sessions.map { it.id })
+        assertEquals("s-alice", state.snapshot.value.selectedId)
+    }
+
+    @Test
+    fun `a first create shows the new session and records the account's first main`() = runTest {
+        val backend = DeferredBackend()
+        val state = OwnedSessionState(backend, this)
+        backend.gate.complete(Unit)
+
+        state.bind("alice")
+        state.create()
+        advanceUntilIdle()
+
+        assertEquals(listOf("new-alice"), state.snapshot.value.sessions.map { it.id })
+        assertEquals("new-alice", state.snapshot.value.primarySessionId)
+        assertEquals("new-alice", state.snapshot.value.selectedId)
+    }
+
+    @Test
+    fun `returning to a main the page never listed shows it and stands in it`() = runTest {
+        val backend = DeferredBackend()
+        val state = OwnedSessionState(backend, this)
+        backend.gate.complete(Unit)
+
+        state.bind("alice")
+        state.returnToPrimary()
+        advanceUntilIdle()
+
+        assertEquals(listOf("s-alice"), state.snapshot.value.sessions.map { it.id })
+        assertEquals("s-alice", state.snapshot.value.primarySessionId)
+        assertEquals("s-alice", state.snapshot.value.selectedId)
+    }
+
+    @Test
+    fun `an ordinary choice leaves the account's main where it was`() = runTest {
+        val backend = DeferredBackend()
+        val state = OwnedSessionState(backend, this)
+        backend.gate.complete(Unit)
+
+        state.bind("alice")
+        state.returnToPrimary()
+        advanceUntilIdle()
+        state.create()
+        advanceUntilIdle()
+
+        assertEquals("s-alice", state.snapshot.value.primarySessionId)
+        assertEquals("new-alice", state.snapshot.value.selectedId)
+        assertEquals(listOf("s-alice", "new-alice"), state.snapshot.value.sessions.map { it.id })
     }
 }

@@ -20,6 +20,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -30,6 +31,7 @@ import me.rerere.rikkahub.data.remote.AccountSession
 import me.rerere.rikkahub.data.remote.OwnedSessionState
 import me.rerere.rikkahub.data.remote.SessionBackend
 import org.koin.compose.koinInject
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.res.stringResource
 
 /**
@@ -37,9 +39,9 @@ import androidx.compose.ui.res.stringResource
  * how to start another or walk back to your main one.
  *
  * This page reads the account from [AccountSession] and nothing else — it holds
- * no identity of its own. Binding the credential on every account change is what
- * makes a sign-out or a new sign-in empty this page immediately, rather than
- * leaving the last account's list on screen.
+ * no identity of its own. Keying the page state to that credential is what makes
+ * a sign-out or a new sign-in empty this page immediately, rather than leaving
+ * the last account's list on screen.
  */
 @Composable
 fun IdentitySessionsPage(
@@ -47,18 +49,20 @@ fun IdentitySessionsPage(
     session: AccountSession = koinInject(),
     backend: SessionBackend = koinInject(),
 ) {
-    val state = remember { OwnedSessionState(backend) }
     val scope = rememberCoroutineScope()
     val token = session.token
 
-    // Rebinding is keyed to the credential, not to the composable: a different
-    // account is a different list, and the old one must not survive the change.
-    LaunchedEffect(token) {
+    // Keyed to the credential, not merely reset by it: a different account gets
+    // different state, so the previous account's snapshot cannot even be shown
+    // for the frame before the new credential is bound.
+    val state = remember(token, backend) { OwnedSessionState(backend, scope) }
+
+    LaunchedEffect(state) {
         state.bind(token)
-        if (token != null) state.refresh(this)
+        if (token != null) state.refresh()
     }
 
-    val snapshot = state.snapshot
+    val snapshot by state.snapshot.collectAsStateWithLifecycle()
 
     Scaffold { innerPadding ->
         Column(
@@ -92,13 +96,13 @@ fun IdentitySessionsPage(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 OutlinedButton(
-                    onClick = { state.refresh(scope) },
+                    onClick = { state.refresh() },
                     enabled = token != null && !snapshot.loading,
                 ) {
                     Text(stringResource(R.string.sessions_refresh_action))
                 }
                 Button(
-                    onClick = { state.create(scope) },
+                    onClick = { state.create() },
                     enabled = token != null && !snapshot.loading,
                 ) {
                     Text(stringResource(R.string.sessions_create_action))
@@ -161,7 +165,7 @@ fun IdentitySessionsPage(
                         }
                         Spacer(Modifier.height(12.dp))
                         FilledTonalButton(
-                            onClick = { state.select(scope, owned.id) },
+                            onClick = { state.select(owned.id) },
                             enabled = !snapshot.loading && !isSelected,
                         ) {
                             Text(stringResource(R.string.sessions_select_action))
@@ -172,7 +176,7 @@ fun IdentitySessionsPage(
 
             Spacer(Modifier.height(24.dp))
             OutlinedButton(
-                onClick = { state.returnToPrimary(scope) },
+                onClick = { state.returnToPrimary() },
                 enabled = token != null && !snapshot.loading,
                 modifier = Modifier.fillMaxWidth(),
             ) {
