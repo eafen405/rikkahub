@@ -8,6 +8,7 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.onEach
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.launch
@@ -383,14 +384,64 @@ class RemoteChatApiTest {
         assertEquals("""{"sessionId":"s-1"}""", onlyRequest().body)
     }
 
+    @Test
+    fun `send presents the completed uploads in order and the same text under one identity`() = runTest {
+        reply(
+            200,
+            """{"ok":true,"receipt":{"sessionId":"s-1","requestId":"r-1","messageId":"m-2","acceptedSeq":2}}""",
+        )
+
+        api.send(TOKEN, "s-1", "r-1", TEXT, listOf("u-b", "u-a"))
+
+        val document = Json.parseToJsonElement(onlyRequest().body).jsonObject
+        // The same requestId has to carry the same original text and the same
+        // ordered ids on every attempt, or the backend refuses it as a conflict.
+        assertEquals(TEXT, document.getValue("text").jsonPrimitive.content)
+        assertEquals(
+            listOf("u-b", "u-a"),
+            document.getValue("uploadIds").jsonArray.map { it.jsonPrimitive.content },
+        )
+    }
+
+    @Test
+    fun `old text only callers keep the default empty attachment list`() = runTest {
+        reply(
+            200,
+            """{"ok":true,"receipt":{"sessionId":"s-1","requestId":"r-1","messageId":"m-2","acceptedSeq":2}}""",
+        )
+
+        api.send(TOKEN, "s-1", "r-1", TEXT)
+
+        assertEquals(
+            emptyList<String>(),
+            Json.parseToJsonElement(onlyRequest().body).jsonObject
+                .get("uploadIds")?.jsonArray.orEmpty().map { it.jsonPrimitive.content },
+        )
+    }
+
+    @Test
+    fun `a projected message carries its original attachment metadata`() = runTest {
+        reply(200, """{"ok":true,"projection":$FIRST_SNAPSHOT}""")
+
+        val projection = api.read(TOKEN, "s-1")
+
+        val attachment = projection.messages.single().attachments.single()
+        assertEquals(0, attachment.index)
+        assertEquals(1, attachment.type)
+        assertEquals("photo.png", attachment.name)
+        assertEquals("image/png", attachment.mime)
+        assertEquals(600000L, attachment.bytes)
+    }
+
     private companion object {
         const val TOKEN = "cred-alice"
         const val TEXT = "  hello\n\tworld  "
 
-        /** A reply still being produced, with exact original text and Markdown. */
+        /** A reply still being produced, with exact original text, Markdown and one attachment. */
         const val FIRST_SNAPSHOT =
             """{"sessionId":"s-1","generation":"gen-1","version":1,"cursor":1,"durableThroughSeq":-1,""" +
-                """"messages":[{"messageId":"m-1","seq":1,"requestId":"r-1","role":1,"status":2,"text":"  hello\n\tworld  "}],""" +
+                """"messages":[{"messageId":"m-1","seq":1,"requestId":"r-1","role":1,"status":2,"text":"  hello\n\tworld  ",""" +
+                """"attachments":[{"index":0,"type":1,"name":"photo.png","mime":"image/png","bytes":600000}]}],""" +
                 """"attempt":{"attemptId":"a-1","revision":3,"text":"thinking"},"replyStatus":2,"error":"the model fell over"}"""
 
         /** A later, cumulative snapshot: two messages, no attempt left. */

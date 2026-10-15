@@ -14,9 +14,24 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
 import java.util.UUID
+import java.io.File
 
 /** An unresolved client command, not authoritative message history. */
-data class PendingChatSend(val requestId: String, val text: String, val acceptanceUnknown: Boolean = false)
+data class PendingChatSend(
+    val requestId: String,
+    val text: String,
+    val acceptanceUnknown: Boolean = false,
+    val uploadIds: List<String> = emptyList(),
+)
+data class RemoteAttachmentDraft(
+    val id: String,
+    val name: String,
+    val mime: String,
+    val bytes: Long,
+    val uploading: Boolean,
+    val uploadId: String? = null,
+    val failure: String? = null,
+)
 data class ChatConsumptionBatch(
     val key: ChatSyncKey,
     val generation: String,
@@ -37,6 +52,10 @@ data class RemoteChatSnapshot(
     val initialized: Boolean = false,
     val batch: ChatConsumptionBatch? = null,
     val storageReady: Boolean = false,
+    val attachmentEpoch: Long = 0,
+    val attachments: List<RemoteAttachmentDraft> = emptyList(),
+    val downloading: Boolean = false,
+    val attachmentNotice: String? = null,
 )
 enum class RemoteMessageFormat { PLAIN, MARKDOWN }
 fun remoteMessageFormat(message: RemoteChatMessage) =
@@ -50,6 +69,7 @@ class RemoteChatState(
     private val store: ChatSyncStore,
     private val endpoint: String,
     private val retryDelayMillis: Long = 1_000,
+    private val attachmentsBackend: RemoteAttachmentBackend? = null,
 ) {
     private val mutable = MutableStateFlow(RemoteChatSnapshot())
     val snapshot: StateFlow<RemoteChatSnapshot> = mutable.asStateFlow()
@@ -65,6 +85,10 @@ class RemoteChatState(
     private val messages = mutableMapOf<String, RemoteChatMessage>()
     private var cut = -1L
     private var before = 0L
+    private var attachmentEpoch = 0L
+    private val draftFiles = mutableMapOf<String, File>()
+    private val uploads = mutableMapOf<String, Job>()
+    private var download: Job? = null
 
     fun bind(credential: String?, selectedSessionId: String?, userShortId: Int?) {
         val selected = if (selectedSessionId != null && userShortId != null) {
@@ -72,6 +96,19 @@ class RemoteChatState(
         } else null
         if (credential == token && selected == key && observer?.isActive == true) return
         val same = selected == key && selected != null
+        if (!same || credential != token) {
+            attachmentEpoch++
+            uploads.values.forEach { it.cancel() }
+            uploads.clear()
+            draftFiles.values.forEach { it.delete() }
+            draftFiles.clear()
+            download?.cancel()
+            download = null
+            mutable.value = mutable.value.copy(
+                attachmentEpoch = attachmentEpoch, attachments = emptyList(),
+                downloading = false, attachmentNotice = null,
+            )
+        }
         token = credential
         key = selected
         epoch++
@@ -82,7 +119,7 @@ class RemoteChatState(
         if (!same) {
             events.clear()
             messages.clear()
-            mutable.value = RemoteChatSnapshot(sessionId = selectedSessionId)
+            mutable.value = RemoteChatSnapshot(sessionId = selectedSessionId, attachmentEpoch = attachmentEpoch)
         } else mutable.value = mutable.value.copy(connected = false, connecting = false)
         if (credential == null || selected == null) return
         val boundEpoch = epoch
@@ -201,6 +238,7 @@ class RemoteChatState(
                     clearPending(selected, pending.requestId)
                     if (!currentGeneration()) return@launch
                     showPending(selected)
+                    clearSentDrafts(pending.uploadIds)
                 }
                 if (currentGeneration()) mutable.value = mutable.value.copy(
                     syncing = mutable.value.consumedThrough < (mutable.value.projection?.cursor ?: -1),
@@ -244,12 +282,114 @@ class RemoteChatState(
     private fun orderedMessages() = messages.values.sortedWith(compareBy<RemoteChatMessage> { it.seq }.thenBy { it.messageId })
     private fun current(boundEpoch: Long, opened: Long) = boundEpoch == epoch && opened == connection
 
-    fun send(text: String) {
-        val selected = key ?: return
+    /** A picker result belongs to the binding captured before the picker opened. */
+    fun addAttachment(expectedEpoch: Long, file: File, name: String, mime: String) {
+        val state = mutable.value
+        if (expectedEpoch != attachmentEpoch || key == null || token == null || attachmentsBackend == null ||
+            !state.storageReady || state.pending != null || state.sending) {
+            file.delete()
+            return
+        }
+        if (state.attachments.size >= 8 || !file.isFile || file.length() > 32L * 1024 * 1024 ||
+            state.attachments.sumOf { it.bytes } + file.length() > 64L * 1024 * 1024) {
+            file.delete()
+            mutable.value = state.copy(attachmentNotice = "最多8个附件，单件32MiB，总计64MiB")
+            return
+        }
+        val id = UUID.randomUUID().toString()
+        draftFiles[id] = file
+        mutable.value = state.copy(attachments = state.attachments + RemoteAttachmentDraft(id, name, mime, file.length(), true), attachmentNotice = null)
+        uploadAttachment(id)
+    }
+
+    fun removeAttachment(id: String) {
+        if (mutable.value.pending != null || mutable.value.sending) return
+        uploads.remove(id)?.cancel()
+        draftFiles.remove(id)?.delete()
+        mutable.value = mutable.value.copy(attachments = mutable.value.attachments.filterNot { it.id == id })
+    }
+
+    fun retryAttachment(id: String) {
+        if (mutable.value.pending != null || mutable.value.sending || uploads[id]?.isActive == true) return
+        if (draftFiles[id] == null) return
+        mutable.value = mutable.value.copy(attachments = mutable.value.attachments.map {
+            if (it.id == id) it.copy(uploading = true, failure = null) else it
+        })
+        uploadAttachment(id)
+    }
+
+    private fun uploadAttachment(id: String) {
+        val backend = attachmentsBackend ?: return
         val credential = token ?: return
-        if (text.isBlank() || !mutable.value.storageReady || mutable.value.sending || mutable.value.pending != null) return
-        val command = StoredChatSend(UUID.randomUUID().toString(), text)
-        mutable.value = mutable.value.copy(sending = true, pending = PendingChatSend(command.requestId, command.text), failure = null)
+        val selected = key ?: return
+        val started = attachmentEpoch
+        val file = draftFiles[id] ?: return
+        val draft = mutable.value.attachments.find { it.id == id } ?: return
+        fun currentDraft() = started == attachmentEpoch && mutable.value.attachments.any { it.id == id }
+        uploads[id] = scope.launch {
+            try {
+                val upload = backend.upload(credential, selected.sessionId, file, draft.name, draft.mime)
+                if (!currentDraft()) return@launch
+                require(upload.status == 1 && upload.size == draft.bytes && upload.offset == draft.bytes) { "附件上传尚未完成" }
+                mutable.value = mutable.value.copy(attachments = mutable.value.attachments.map {
+                    if (it.id == id) it.copy(name = upload.name, uploading = false, uploadId = upload.uploadId) else it
+                })
+                draftFiles.remove(id)?.delete()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                if (currentDraft()) mutable.value = mutable.value.copy(attachments = mutable.value.attachments.map {
+                    if (it.id == id) it.copy(uploading = false, failure = failure.description()) else it
+                })
+            } finally {
+                if (started == attachmentEpoch) uploads.remove(id)
+            }
+        }
+    }
+
+    private fun clearSentDrafts(uploadIds: List<String>) {
+        mutable.value = mutable.value.copy(attachments = mutable.value.attachments.filterNot { it.uploadId in uploadIds })
+    }
+
+    /** Download privately first. A late response never reaches a new binding's SAF target. */
+    fun downloadAttachment(
+        expectedEpoch: Long,
+        messageId: String,
+        attachment: RemoteChatAttachment,
+        destination: File,
+        save: suspend (File) -> Unit,
+    ) {
+        val backend = attachmentsBackend
+        val credential = token
+        val selected = key
+        if (expectedEpoch != attachmentEpoch || backend == null || credential == null || selected == null || mutable.value.downloading) {
+            destination.delete()
+            return
+        }
+        mutable.value = mutable.value.copy(downloading = true, attachmentNotice = null)
+        download = scope.launch {
+            try {
+                backend.download(credential, selected.sessionId, messageId, attachment, destination)
+                if (expectedEpoch != attachmentEpoch) return@launch
+                save(destination)
+                if (expectedEpoch == attachmentEpoch) mutable.value = mutable.value.copy(attachmentNotice = "原件已保存")
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                if (expectedEpoch == attachmentEpoch) mutable.value = mutable.value.copy(attachmentNotice = failure.description())
+            } finally {
+                destination.delete()
+                if (expectedEpoch == attachmentEpoch) mutable.value = mutable.value.copy(downloading = false)
+            }
+        }
+    }
+
+    fun send(text: String): Boolean {
+        val selected = key ?: return false
+        val credential = token ?: return false
+        val drafts = mutable.value.attachments
+        if ((text.isBlank() && drafts.isEmpty()) || drafts.any { it.uploadId == null || it.uploading } ||
+            !mutable.value.storageReady || mutable.value.sending || mutable.value.pending != null) return false
+        val command = StoredChatSend(UUID.randomUUID().toString(), text, drafts.map { it.uploadId!! })
+        mutable.value = mutable.value.copy(sending = true, pending = command.pending().copy(acceptanceUnknown = false), failure = null)
         scope.launch {
             try {
                 update(selected) { it.copy(pending = command) } // Save identity BEFORE any network side effect.
@@ -258,6 +398,7 @@ class RemoteChatState(
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { commandFailure(selected, command, failure) }
         }
+        return true
     }
     fun retryPending() {
         val selected = key ?: return
@@ -267,19 +408,22 @@ class RemoteChatState(
         mutable.value = mutable.value.copy(sending = true, failure = null)
         scope.launch {
             try {
-                update(selected) { it.copy(pending = StoredChatSend(command.requestId, command.text)) }
-                transmit(credential, selected, StoredChatSend(command.requestId, command.text))
+                update(selected) { it.copy(pending = StoredChatSend(command.requestId, command.text, command.uploadIds)) }
+                transmit(credential, selected, StoredChatSend(command.requestId, command.text, command.uploadIds))
             }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (failure: Exception) { commandFailure(selected, StoredChatSend(command.requestId, command.text), failure) }
+            catch (failure: Exception) { commandFailure(selected, StoredChatSend(command.requestId, command.text, command.uploadIds), failure) }
         }
     }
     private suspend fun transmit(credential: String, selected: ChatSyncKey, command: StoredChatSend) {
         if (credential != token || selected != key) return
-        backend.send(credential, selected.sessionId, command.requestId, command.text)
+        backend.send(credential, selected.sessionId, command.requestId, command.text, command.uploadIds)
         clearPending(selected, command.requestId)
         showPending(selected)
-        if (key == selected) mutable.value = mutable.value.copy(sending = false)
+        if (key == selected) {
+            clearSentDrafts(command.uploadIds)
+            mutable.value = mutable.value.copy(sending = false)
+        }
     }
     private suspend fun commandFailure(selected: ChatSyncKey, command: StoredChatSend, failure: Exception) {
         var rejected = false
@@ -311,7 +455,10 @@ class RemoteChatState(
         mutable.value = mutable.value.copy(sending = true, failure = null)
         scope.launch {
             try {
-                if (backend.receipt(credential, selected.sessionId, command.requestId) != null) clearPending(selected, command.requestId)
+                if (backend.receipt(credential, selected.sessionId, command.requestId) != null) {
+                    clearPending(selected, command.requestId)
+                    if (selected == key) clearSentDrafts(command.uploadIds)
+                }
                 showPending(selected)
                 if (selected == key) mutable.value = mutable.value.copy(sending = false)
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -344,6 +491,6 @@ class RemoteChatState(
         val pending = load(selected).pending
         if (selected == key) mutable.value = mutable.value.copy(pending = pending?.pending())
     }
-    private fun StoredChatSend.pending() = PendingChatSend(requestId, text, acceptanceUnknown = true)
+    private fun StoredChatSend.pending() = PendingChatSend(requestId, text, acceptanceUnknown = true, uploadIds = uploadIds)
     private fun Exception.description() = if (this is IdentityUnreachable) SessionsSnapshot.UNREACHABLE else message ?: "同步失败"
 }

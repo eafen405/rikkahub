@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 data class ChatSyncKey(val endpoint: String, val userShortId: Int, val sessionId: String)
 
 @Serializable
-data class StoredChatSend(val requestId: String, val text: String)
+data class StoredChatSend(val requestId: String, val text: String, val uploadIds: List<String> = emptyList())
 
 /** Consumption bookkeeping only; history must still reload after process recreation. */
 @Serializable

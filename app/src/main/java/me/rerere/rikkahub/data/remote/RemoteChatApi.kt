@@ -20,6 +20,16 @@ import java.io.IOException
 import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
 
+/** One attachment of a projected message, as the backend stores it. Type: 1 file, 2 image. */
+@Serializable
+data class RemoteChatAttachment(
+    val index: Int,
+    val type: Int,
+    val name: String,
+    val mime: String,
+    val bytes: Long,
+)
+
 /** Wire role: 1 user, 2 Fairy. Status: 1 pending, 2 complete, 3 interrupted, 4 failed. */
 @Serializable
 data class RemoteChatMessage(
@@ -29,6 +39,7 @@ data class RemoteChatMessage(
     val role: Int,
     val status: Int,
     val text: String,
+    val attachments: List<RemoteChatAttachment> = emptyList(),
 )
 
 /** Cumulative raw text; attempt identity is scoped to the projection generation. */
@@ -80,7 +91,14 @@ data class ChatHistoryPage(
 interface RemoteChatBackend {
     suspend fun read(token: String, sessionId: String): RemoteChatProjection
 
-    suspend fun send(token: String, sessionId: String, requestId: String, text: String): ChatReceipt
+    /** [uploadIds] are completed uploads in the order the message shows them. */
+    suspend fun send(
+        token: String,
+        sessionId: String,
+        requestId: String,
+        text: String,
+        uploadIds: List<String> = emptyList(),
+    ): ChatReceipt
 
     suspend fun receipt(token: String, sessionId: String, requestId: String): ChatReceipt?
 
@@ -109,8 +127,14 @@ internal data class ChatEnvelope(
 @Serializable
 private data class SessionRef(val sessionId: String)
 
+/** The same requestId carries this exact text and these exact ids, forever. */
 @Serializable
-private data class SendDocument(val sessionId: String, val requestId: String, val text: String)
+private data class SendDocument(
+    val sessionId: String,
+    val requestId: String,
+    val text: String,
+    val uploadIds: List<String> = emptyList(),
+)
 
 @Serializable
 private data class PageDocument(val sessionId: String, val throughSeq: Long, val beforeSeq: Long)
@@ -136,10 +160,11 @@ class RemoteChatApi(
         sessionId: String,
         requestId: String,
         text: String,
+        uploadIds: List<String>,
     ): ChatReceipt =
         call(
             "/chat/send",
-            json.encodeToString(SendDocument(sessionId, requestId, text)),
+            json.encodeToString(SendDocument(sessionId, requestId, text, uploadIds)),
             token,
         ).receipt ?: throw IdentityUnreachable(
             // Accepted but unacknowledged is exactly the state the wire says is

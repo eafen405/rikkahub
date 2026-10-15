@@ -28,7 +28,7 @@ class RemoteChatStateTest {
             ChatHistoryPage(sessionId, throughSeq, 0, events = (0 until beforeSeq).map(RemoteChatRecoveryTest::event))
         override suspend fun checkpoint(token: String, sessionId: String) = ack
         override suspend fun read(token: String, sessionId: String) = projection(sessionId)
-        override suspend fun send(token: String, sessionId: String, requestId: String, text: String): ChatReceipt {
+        override suspend fun send(token: String, sessionId: String, requestId: String, text: String, uploadIds: List<String>): ChatReceipt {
             sent += Triple(sessionId, requestId, text)
             sendGate?.let { withContext(NonCancellable) { it.await() } }
             failure?.let { throw it }

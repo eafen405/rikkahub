@@ -64,7 +64,7 @@ class RemoteChatRecoveryTest {
             return ack
         }
         override suspend fun read(token:String,sessionId:String)=projection(0,1)
-        override suspend fun send(token:String,sessionId:String,requestId:String,text:String):ChatReceipt {
+        override suspend fun send(token:String,sessionId:String,requestId:String,text:String,uploadIds:List<String>):ChatReceipt {
             sendCount++; onSend?.invoke()
             sendGate?.await()
             throw IdentityUnreachable(IOException("response lost"))
