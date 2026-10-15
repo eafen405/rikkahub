@@ -198,6 +198,16 @@ class RemoteChatState(
                 throw cancelled
             } catch (failure: Exception) {
                 if (current(boundEpoch, opened)) mutable.value = mutable.value.copy(syncing = true, failure = failure.description())
+            } finally {
+                // Live facts can arrive while the local commit is awaiting disk. Retry that remaining prefix.
+                if (current(boundEpoch, opened) && mutable.value.connected && mutable.value.syncing) {
+                    scope.launch {
+                        delay(retryDelayMillis)
+                        if (current(boundEpoch, opened) && mutable.value.connected && mutable.value.syncing) {
+                            scheduleSync(boundEpoch, opened, credential, selected)
+                        }
+                    }
+                }
             }
         }
     }
@@ -227,7 +237,7 @@ class RemoteChatState(
         val credential = token ?: return
         if (text.isBlank() || !mutable.value.storageReady || mutable.value.sending || mutable.value.pending != null) return
         val command = StoredChatSend(UUID.randomUUID().toString(), text)
-        mutable.value = mutable.value.copy(sending = true, failure = null)
+        mutable.value = mutable.value.copy(sending = true, pending = PendingChatSend(command.requestId, command.text), failure = null)
         scope.launch {
             try {
                 update(selected) { it.copy(pending = command) } // Save identity BEFORE any network side effect.
@@ -244,24 +254,41 @@ class RemoteChatState(
         if (!command.acceptanceUnknown || mutable.value.sending) return
         mutable.value = mutable.value.copy(sending = true, failure = null)
         scope.launch {
-            try { transmit(credential, selected, StoredChatSend(command.requestId, command.text)) }
+            try {
+                update(selected) { it.copy(pending = StoredChatSend(command.requestId, command.text)) }
+                transmit(credential, selected, StoredChatSend(command.requestId, command.text))
+            }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { commandFailure(selected, StoredChatSend(command.requestId, command.text), failure) }
         }
     }
     private suspend fun transmit(credential: String, selected: ChatSyncKey, command: StoredChatSend) {
+        if (credential != token || selected != key) return
         backend.send(credential, selected.sessionId, command.requestId, command.text)
         clearPending(selected, command.requestId)
         showPending(selected)
         if (key == selected) mutable.value = mutable.value.copy(sending = false)
     }
     private suspend fun commandFailure(selected: ChatSyncKey, command: StoredChatSend, failure: Exception) {
+        var rejected = false
         if (failure is IdentityRefused && failure.status < 500) {
-            try { clearPending(selected, command.requestId) } catch (_: Exception) { /* Keep recoverable identity on a failed clear. */ }
+            try {
+                clearPending(selected, command.requestId)
+                rejected = true
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { /* Keep the original identity when local clearing fails. */ }
         }
         if (selected == key) {
-            showPending(selected)
-            mutable.value = mutable.value.copy(sending = false, failure = failure.description())
+            val persisted = load(selected).pending
+            val projection = mutable.value.projection
+            val accepted = persisted == null && projection?.messages?.any {
+                it.requestId == command.requestId && it.seq <= projection.durableThroughSeq
+            } == true
+            mutable.value = mutable.value.copy(
+                sending = false,
+                pending = if (rejected || accepted) null else persisted?.pending() ?: command.pending(),
+                failure = failure.description(),
+            )
         }
     }
     fun reconcile() {

@@ -37,7 +37,7 @@ class AndroidChatSyncStore(context: Context) : ChatSyncStore {
         }
     }
 
-        private fun ChatSyncKey.preferenceKey(): String {
+    private fun ChatSyncKey.preferenceKey(): String {
         val canonical = json.encodeToString(KeyTuple(endpoint.trimEnd('/'), userShortId, sessionId))
         val digest = MessageDigest.getInstance("SHA-256").digest(canonical.toByteArray(Charsets.UTF_8))
         return buildString(digest.size * 2) {
