@@ -96,6 +96,18 @@ class RemoteAttachmentStateTest {
         assertEquals(listOf("a".repeat(32)),state.snapshot.value.pending?.uploadIds)
     }
 
+    @Test fun `draft import waits for pending restoration before starting upload`() = runTest {
+        val files = Files()
+        val state = RemoteChatState(Chat(),backgroundScope,Store(),"https://fairy",attachmentsBackend=files)
+        state.bind("alice","s1",1)
+        val file = original()
+        state.addAttachment(state.snapshot.value.attachmentEpoch,file,"note.txt","text/plain")
+        runCurrent()
+        assertTrue(files.originals.isEmpty())
+        assertFalse(file.exists())
+        assertTrue(state.snapshot.value.attachments.isEmpty())
+    }
+
     @Test fun `late upload after account switch is discarded rather than attached to new draft`() = runTest {
         val gate = CompletableDeferred<Unit>()
         val files = Files().apply { uploadGate = gate }

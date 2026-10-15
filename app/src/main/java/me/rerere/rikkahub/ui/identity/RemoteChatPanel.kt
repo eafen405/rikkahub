@@ -91,7 +91,7 @@ fun RemoteChatPanel(
     val drafts = snapshot.attachments
     // Draft editing is frozen while a command is unresolved: the pending record already holds
     // this message's text and upload ids, and changing the draft would contradict a resend.
-    val frozen = snapshot.sending || snapshot.pending != null
+    val frozen = !snapshot.storageReady || snapshot.sending || snapshot.pending != null
     val uploadsSettled = drafts.all { it.uploadId != null && !it.uploading }
     // Text may be empty as long as files are attached; neither may be empty.
     val canSend = snapshot.storageReady && !frozen && uploadsSettled &&

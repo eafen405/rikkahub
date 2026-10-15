@@ -286,7 +286,7 @@ class RemoteChatState(
     fun addAttachment(expectedEpoch: Long, file: File, name: String, mime: String) {
         val state = mutable.value
         if (expectedEpoch != attachmentEpoch || key == null || token == null || attachmentsBackend == null ||
-            state.pending != null || state.sending) {
+            !state.storageReady || state.pending != null || state.sending) {
             file.delete()
             return
         }
