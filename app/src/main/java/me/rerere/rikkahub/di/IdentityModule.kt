@@ -1,6 +1,12 @@
 package me.rerere.rikkahub.di
 
 import android.content.Context
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import me.rerere.rikkahub.data.remote.RemoteChatApi
+import me.rerere.rikkahub.data.remote.RemoteChatBackend
+import me.rerere.rikkahub.data.remote.RemoteChatState
 import me.rerere.rikkahub.BuildConfig
 import me.rerere.rikkahub.data.remote.AccountSession
 import me.rerere.rikkahub.data.remote.AndroidKeystoreCredentialStore
@@ -34,6 +40,14 @@ val identityModule = module {
 
     single<SessionBackend> {
         SessionApi(baseUrl = identityEndpoint, client = get<OkHttpClient>())
+    }
+
+    single<RemoteChatBackend> {
+        RemoteChatApi(baseUrl = identityEndpoint, client = get<OkHttpClient>())
+    }
+
+    single {
+        RemoteChatState(get<RemoteChatBackend>(), CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate))
     }
 
     single {
