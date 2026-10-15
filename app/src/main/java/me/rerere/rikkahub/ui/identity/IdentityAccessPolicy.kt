@@ -28,6 +28,7 @@ enum class IdentityDestination {
     SIGN_IN,
     REGISTER,
     ACCOUNT,
+    SESSIONS,
     CONVERSATION,
     GATEWAY,
     INVITES,
@@ -71,6 +72,7 @@ object IdentityAccessPolicy {
         IdentityDestination.SIGN_IN,
         IdentityDestination.REGISTER,
         IdentityDestination.ACCOUNT,
+        IdentityDestination.SESSIONS,
         IdentityDestination.INVITES,
     )
 
@@ -94,7 +96,9 @@ object IdentityAccessPolicy {
 
             // The identity area this release actually delivers: who you are,
             // and the operations your identity is allowed to perform.
-            IdentityDestination.ACCOUNT -> identity.signedIn
+            IdentityDestination.ACCOUNT,
+            IdentityDestination.SESSIONS,
+            -> identity.signedIn
 
             // Minting invites is the administrator's own operation. An ordinary
             // agent is refused here by the policy as well as by the backend.

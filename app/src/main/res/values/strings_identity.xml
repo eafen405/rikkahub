@@ -33,4 +33,20 @@
 
   <string name="identity_working">Working…</string>
   <string name="identity_unreachable">The backend could not be reached.</string>
+
+  <string name="sessions_title">Your sessions</string>
+  <string name="sessions_explain">These sessions live on the server and belong to your account alone.</string>
+  <string name="sessions_refresh_action">Refresh</string>
+  <string name="sessions_create_action">New session</string>
+  <string name="sessions_signed_out">Sign in to see your sessions.</string>
+  <string name="sessions_list_title">All sessions</string>
+  <string name="sessions_empty">No sessions yet.</string>
+  <string name="sessions_row_title">Session</string>
+  <string name="sessions_row_primary">Main session</string>
+  <string name="sessions_select_action">Use this session</string>
+  <string name="sessions_return_primary_action">Return to my main session</string>
+  <string name="sessions_back_action">Back to account</string>
+  <string name="sessions_selected_title">You are in</string>
+  <string name="sessions_selected_none">No session selected.</string>
+  <string name="sessions_chat_not_ready">Chatting in this session is not available yet.</string>
 </resources>

@@ -90,6 +90,7 @@ import me.rerere.rikkahub.ui.identity.IdentityDestination
 import me.rerere.rikkahub.ui.identity.IdentityNotReadyPage
 import me.rerere.rikkahub.ui.identity.IdentityRegisterPage
 import me.rerere.rikkahub.ui.identity.IdentityScope
+import me.rerere.rikkahub.ui.identity.IdentitySessionsPage
 import me.rerere.rikkahub.ui.identity.IdentitySignInPage
 import me.rerere.rikkahub.ui.identity.restoreIdentitySession
 import me.rerere.rikkahub.ui.pages.assistant.AssistantPage
@@ -412,8 +413,15 @@ class RouteActivity : ComponentActivity() {
                                 )
                             }
 
+                            entry<Screen.Sessions> {
+                                IdentitySessionsPage(
+                                    onBack = { backStack.removeLastOrNull() },
+                                )
+                            }
+
                             entry<Screen.Account> {
                                 IdentityAccountPage(
+                                    onSessions = { backStack.add(Screen.Sessions) },
                                     onSignedOut = {
                                         identityRevision += 1
                                         backStack.clear()
@@ -724,6 +732,7 @@ private fun Screen.toIdentityDestination(): IdentityDestination? = when (this) {
     is Screen.SignIn -> IdentityDestination.SIGN_IN
     is Screen.Register -> IdentityDestination.REGISTER
     is Screen.Account -> IdentityDestination.ACCOUNT
+    is Screen.Sessions -> IdentityDestination.SESSIONS
     else -> null
 }
 
@@ -741,6 +750,9 @@ sealed interface Screen : NavKey {
 
     @Serializable
     data object Account : Screen
+
+    /** This account's remote sessions: list, create, choose, return to main. */
+    data object Sessions : Screen
 
     @Serializable
     data class Chat(

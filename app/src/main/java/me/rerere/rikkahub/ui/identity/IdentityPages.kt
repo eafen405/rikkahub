@@ -277,6 +277,7 @@ fun IdentityRegisterPage(
  */
 @Composable
 fun IdentityAccountPage(
+    onSessions: () -> Unit,
     onSignedOut: () -> Unit,
     session: AccountSession = koinInject(),
     backend: IdentityBackend = koinInject(),
@@ -325,6 +326,15 @@ fun IdentityAccountPage(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+
+            Spacer(Modifier.height(24.dp))
+            Button(
+                onClick = onSessions,
+                enabled = token != null,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.sessions_title))
             }
 
             if (user?.isAdmin == true) {
