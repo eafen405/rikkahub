@@ -27,8 +27,10 @@ class RemoteAttachmentStateTest {
     }
     private class Chat : RemoteChatBackend {
         val sent = mutableListOf<StoredChatSend>()
+        val events = MutableSharedFlow<RemoteChatProjection>()
         var fail = true
-        override fun observe(token:String, sessionId:String): Flow<RemoteChatProjection> = MutableSharedFlow()
+        var ack = -1L
+        override fun observe(token:String, sessionId:String): Flow<RemoteChatProjection> = events
         override suspend fun read(token:String,sessionId:String) = RemoteChatProjection(sessionId)
         override suspend fun send(token:String,sessionId:String,requestId:String,text:String,uploadIds:List<String>):ChatReceipt {
             sent += StoredChatSend(requestId, text, uploadIds)
@@ -38,20 +40,29 @@ class RemoteAttachmentStateTest {
         override suspend fun receipt(token:String,sessionId:String,requestId:String):ChatReceipt? = null
         override suspend fun stop(token:String,sessionId:String) {}
         override suspend fun page(token:String,sessionId:String,throughSeq:Long,beforeSeq:Long) = ChatHistoryPage(sessionId,throughSeq,0)
-        override suspend fun checkpoint(token:String,sessionId:String) = -1L
+        override suspend fun checkpoint(token:String,sessionId:String) = ack
     }
+    private data class DownloadCall(
+        val token:String,
+        val sessionId:String,
+        val messageId:String,
+        val attachment:RemoteChatAttachment,
+    )
     private class Files : RemoteAttachmentBackend {
         var uploadGate: CompletableDeferred<Unit>? = null
         var downloadGate: CompletableDeferred<Unit>? = null
         val originals = mutableListOf<ByteArray>()
+        val downloads = mutableListOf<DownloadCall>()
+        var delivered = "original".toByteArray()
         override suspend fun upload(token:String,sessionId:String,file:File,name:String,mime:String):RemoteAttachmentUpload {
             originals += file.readBytes()
             uploadGate?.let { withContext(NonCancellable) { it.await() } }
             return RemoteAttachmentUpload("a".repeat(32),name,mime,file.length(),"b".repeat(64),1,file.length(),Long.MAX_VALUE)
         }
         override suspend fun download(token:String,sessionId:String,messageId:String,attachment:RemoteChatAttachment,destination:File) {
+            downloads += DownloadCall(token,sessionId,messageId,attachment)
             downloadGate?.let { withContext(NonCancellable) { it.await() } }
-            destination.writeText("original")
+            destination.writeBytes(delivered)
         }
     }
     private fun original() = File.createTempFile("attachment", ".txt").apply { writeText("exact original\n") }
@@ -140,5 +151,47 @@ class RemoteAttachmentStateTest {
         assertFalse(saved)
         assertFalse(destination.exists())
         assertNull(state.snapshot.value.attachmentNotice)
+    }
+
+    @Test fun `delivered attachment is downloaded from the projected message while an attempt runs, without sending or uploading`() = runTest {
+        val chat = Chat().apply { ack = 0 }
+        val files = Files().apply { delivered = "exact original\n".toByteArray() }
+        val state = RemoteChatState(chat,backgroundScope,Store(),"https://fairy",attachmentsBackend=files)
+        val attachment = RemoteChatAttachment(0,1,"note.txt","text/plain",15)
+        state.bind("bob","s1",2); runCurrent()
+        chat.events.emit(RemoteChatProjection(
+            sessionId="s1", generation="g1", version=1, cursor=0, durableThroughSeq=0,
+            messages=listOf(RemoteChatMessage("m1",0,null,2,2,"原件在这里",listOf(attachment))),
+            attempt=RemoteChatAttempt("a1",1,"正在回复"), replyStatus=1,
+            throughSeq=0, fromSeq=0, events=listOf(RemoteChatRecoveryTest.event(0)),
+        )); runCurrent()
+        val snapshot = state.snapshot.value
+        assertNull(snapshot.failure)
+        assertEquals(0L,snapshot.consumedThrough)
+        val delivered = snapshot.projection!!.messages.single()
+        assertEquals("m1",delivered.messageId)
+        assertEquals(listOf(attachment),delivered.attachments)
+        // A delivery and a running attempt are separate facts: neither hides the other.
+        assertEquals("正在回复",snapshot.projection?.attempt?.text)
+        assertEquals(1,snapshot.projection?.replyStatus)
+        assertEquals(RemoteMessageFormat.MARKDOWN,remoteMessageFormat(delivered))
+        assertEquals(RemoteMessageFormat.PLAIN,remoteAttemptFormat())
+        val destination = File.createTempFile("download", ".tmp")
+        var saved = ByteArray(0)
+        state.downloadAttachment(snapshot.attachmentEpoch,delivered.messageId,delivered.attachments.single(),destination) { saved = it.readBytes() }
+        runCurrent()
+        val call = files.downloads.single()
+        assertEquals("bob",call.token)
+        assertEquals("s1",call.sessionId)
+        assertEquals("m1",call.messageId)
+        assertEquals(attachment,call.attachment)
+        assertArrayEquals("exact original\n".toByteArray(),saved)
+        assertFalse(destination.exists())
+        assertEquals("原件已保存",state.snapshot.value.attachmentNotice)
+        assertFalse(state.snapshot.value.downloading)
+        // Receiving a delivery needs neither a send nor an upload.
+        assertTrue(chat.sent.isEmpty())
+        assertTrue(files.originals.isEmpty())
+        assertNull(state.snapshot.value.pending)
     }
 }
