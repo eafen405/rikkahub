@@ -91,7 +91,7 @@ import me.rerere.rikkahub.ui.identity.IdentityNotReadyPage
 import me.rerere.rikkahub.ui.identity.IdentityRegisterPage
 import me.rerere.rikkahub.ui.identity.IdentityScope
 import me.rerere.rikkahub.ui.identity.IdentitySignInPage
-import me.rerere.rikkahub.ui.identity.identityStartScreen
+import me.rerere.rikkahub.ui.identity.restoreIdentitySession
 import me.rerere.rikkahub.ui.pages.assistant.AssistantPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantBasicPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantDetailPage
@@ -299,44 +299,26 @@ class RouteActivity : ComponentActivity() {
         val session = koinInject<AccountSession>()
         var identityRevision by remember { mutableIntStateOf(0) }
         val identityUser = remember(identityRevision) { session.user }
-        // Restoration is in flight until the session says otherwise. Nothing is
-        // judged before it answers, because nothing is known: a stack seeded
-        // now would point a returning user at sign-in, which their own restored
-        // credential then refuses.
+        // Keep destinations behind the loading indicator until restoration finishes.
         var identitySettled by remember { mutableStateOf(false) }
-        LaunchedEffect(Unit) {
-            // A credential left from a previous run is re-established before the
-            // gate decides where to land, so a returning user is not asked to
-            // sign in again — and a credential the backend rejects is dropped.
-            try {
-                session.restore()
-            } finally {
-                identityRevision += 1
-                identitySettled = true
-            }
-        }
 
         val identityScope = IdentityScope(signedIn = identityUser != null, isAdmin = identityUser?.isAdmin == true)
 
-        val startScreen = identityStartScreen(identityScope)
-
-        val backStack = rememberNavBackStack(startScreen)
+        // Startup replaces this provisional stack with the restored identity landing page.
+        val backStack = rememberNavBackStack(Screen.SignIn)
         SideEffect {
             navStack = backStack
             while (pendingIntents.isNotEmpty()) {
                 handleIntent(pendingIntents.removeFirst())
             }
         }
-        SideEffect {
-            // The session is the only authority on who is signing in, so when it
-            // changes, the screen this stack points at may no longer be one this
-            // identity may compose. Move it to where this identity actually
-            // lands rather than stranding it on the not-ready page.
-            if (!identitySettled) return@SideEffect
-            val selected = (backStack.lastOrNull() as? Screen)?.toIdentityDestination()
-            if (!IdentityAccessPolicy.mayCompose(selected, identityScope)) {
-                backStack.clear()
-                backStack.add(identityStartScreen(identityScope))
+        LaunchedEffect(Unit) {
+            // Normalize once at startup; later navigation still passes through the gate.
+            try {
+                restoreIdentitySession(session, backStack)
+            } finally {
+                identityRevision += 1
+                identitySettled = true
             }
         }
 

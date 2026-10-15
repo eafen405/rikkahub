@@ -95,10 +95,9 @@ deployed domain — must be given explicitly:
 ./gradlew assembleRelease -Pourfairy.identityEndpoint=https://ourfairy.example.com
 ```
 
-A release build requested without the property fails rather than shipping the emulator address. The
-value must be an `http://` or `https://` URL and is compiled into
-`BuildConfig.IDENTITY_ENDPOINT`; a build that ends up with no address at all refuses to start rather
-than dialling a machine-local loopback from a real device.
+A release build requested without the property fails while generating its `BuildConfig` rather than
+shipping the emulator default. The value is compiled into `BuildConfig.IDENTITY_ENDPOINT` and used
+as given by the identity HTTP client.
 
 ## 💰 Donate
 

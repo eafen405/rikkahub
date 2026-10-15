@@ -14,54 +14,33 @@ plugins {
     alias(libs.plugins.baselineprofile)
 }
 
-// Where this build reaches the OurFairy backend. This is a deployment concern,
-// not a source one, so it arrives on the command line: see README, "Pointing a
-// build at a backend".
+// Backend address supplied at build time; deployment examples are in README.
 val identityEndpointProperty = "ourfairy.identityEndpoint"
 
 /** The host machine as seen from an Android emulator — a debug convenience only. */
 val emulatorIdentityEndpoint = "http://10.0.2.2:3080"
 
-/** Only tasks actually asking for a release artifact may demand the property. */
-val buildingRelease = gradle.startParameter.taskNames.any {
-    it.substringAfterLast(':').contains("release", ignoreCase = true)
-}
-
-/**
- * The address compiled into [BuildConfig.IDENTITY_ENDPOINT].
- *
- * Debug falls back to the emulator loopback so `./gradlew assembleDebug` keeps
- * working against a backend on the development machine. Release never falls back:
- * when a release task is requested without the property this stops the build,
- * and when release is reached indirectly (through `build`, say) the field stays
- * empty, which makes [me.rerere.rikkahub.di.resolveIdentityEndpoint] refuse the
- * value at startup. A release must not quietly ship an address that resolves
- * nowhere on a phone.
- */
-fun identityEndpoint(release: Boolean): String {
-    val configured = providers.gradleProperty(identityEndpointProperty).orNull?.trim().orEmpty()
-    if (configured.isEmpty()) {
-        if (release && buildingRelease) {
-            throw GradleException(
-                "A release build must be told where the OurFairy backend is:\n" +
-                    "  ./gradlew assembleRelease -P$identityEndpointProperty=https://<host>\n" +
-                    "Without it the release would ship $emulatorIdentityEndpoint, " +
-                    "which is the emulator's view of the build machine and reaches nothing on a phone."
-            )
-        }
-        return if (release) "" else emulatorIdentityEndpoint
-    }
-    if (!configured.startsWith("http://") && !configured.startsWith("https://")) {
-        throw GradleException(
-            "-P$identityEndpointProperty must be an http:// or https:// address, but was '$configured'."
-        )
-    }
-    return configured.trimEnd('/')
-}
+/** The configured address, or null when this build was not told one. */
+val configuredIdentityEndpoint: String? =
+    providers.gradleProperty(identityEndpointProperty).orNull?.trim()?.takeIf { it.isNotEmpty() }
 
 /** Quote [endpoint] as a Java string literal, since it lands in generated source. */
 fun identityEndpointField(endpoint: String): String =
     "\"" + endpoint.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+// Guard the generation task so indirect release builds require the address too.
+tasks.matching { it.name == "generateReleaseBuildConfig" }.configureEach {
+    val configured = configuredIdentityEndpoint
+    val propertyName = identityEndpointProperty
+    doFirst {
+        if (configured == null) {
+            throw GradleException(
+                "A release build must be told where the OurFairy backend is:\n" +
+                    "  ./gradlew assembleRelease -P$propertyName=https://<host>"
+            )
+        }
+    }
+}
 
 android {
     namespace = "me.rerere.rikkahub"
@@ -133,7 +112,7 @@ android {
             buildConfigField(
                 "String",
                 "IDENTITY_ENDPOINT",
-                identityEndpointField(identityEndpoint(release = true)),
+                identityEndpointField(configuredIdentityEndpoint.orEmpty()),
             )
         }
         debug {
@@ -143,7 +122,7 @@ android {
             buildConfigField(
                 "String",
                 "IDENTITY_ENDPOINT",
-                identityEndpointField(identityEndpoint(release = false)),
+                identityEndpointField(configuredIdentityEndpoint ?: emulatorIdentityEndpoint),
             )
         }
     }
