@@ -86,7 +86,7 @@ class SessionApiTest {
     fun `list posts to the sessions list path with the bearer credential and no body`() = runTest {
         reply(
             200,
-            """{"ok":true,"sessions":[{"id":"s-1","owner":"user:1","primary":true,"createdAt":"2026-10-15T00:00:00Z"}],"primarySessionId":"s-1"}""",
+            """{"ok":true,"sessions":[{"id":"s-1","owner":"user:1","primary":true,"createdAt":1760000000000}],"primarySessionId":"s-1"}""",
         )
 
         val listed = api.list(TOKEN)
@@ -102,6 +102,9 @@ class SessionApiTest {
 
         assertEquals(listOf("s-1"), listed.sessions.map { it.id })
         assertEquals("s-1", listed.primarySessionId)
+        // The backend passes `header.createdAt` straight through, and that is
+        // `Date.now()` milliseconds — a number on the wire, not an ISO string.
+        assertEquals(CREATED_AT, listed.sessions.single().createdAt)
     }
 
     @Test
@@ -118,7 +121,7 @@ class SessionApiTest {
 
     @Test
     fun `create posts to the sessions create path and returns the new session`() = runTest {
-        reply(200, """{"ok":true,"session":{"id":"s-2","owner":"user:1","primary":false,"createdAt":"2026-10-15T01:00:00Z"}}""")
+        reply(200, """{"ok":true,"session":{"id":"s-2","owner":"user:1","primary":false,"createdAt":1760003600000}}""")
 
         val created = api.create(TOKEN)
 
@@ -138,7 +141,7 @@ class SessionApiTest {
 
     @Test
     fun `select names the session it wants and answers with the same session`() = runTest {
-        reply(200, """{"ok":true,"session":{"id":"s-2","owner":"user:1","primary":false,"createdAt":"2026-10-15T01:00:00Z"}}""")
+        reply(200, """{"ok":true,"session":{"id":"s-2","owner":"user:1","primary":false,"createdAt":1760003600000}}""")
 
         val selected = api.select(TOKEN, "s-2")
 
@@ -156,7 +159,7 @@ class SessionApiTest {
 
     @Test
     fun `primary asks for the main session without naming one`() = runTest {
-        reply(200, """{"ok":true,"session":{"id":"s-1","owner":"user:1","primary":true,"createdAt":"2026-10-15T00:00:00Z"}}""")
+        reply(200, """{"ok":true,"session":{"id":"s-1","owner":"user:1","primary":true,"createdAt":1760000000000}}""")
 
         val primary = api.primary(TOKEN)
 
@@ -175,7 +178,7 @@ class SessionApiTest {
 
     @Test
     fun `read names the session it wants`() = runTest {
-        reply(200, """{"ok":true,"session":{"id":"s-7","owner":"user:9","primary":false,"createdAt":"2026-10-15T02:00:00Z"}}""")
+        reply(200, """{"ok":true,"session":{"id":"s-7","owner":"user:9","primary":false,"createdAt":1760007200000}}""")
 
         val read = api.read(TOKEN, "s-7")
 
@@ -220,7 +223,24 @@ class SessionApiTest {
         }
     }
 
+    @Test
+    fun `a failed status is a failure even when the envelope claims success`() = runTest {
+        // `ok: true` is the body's claim; the status is the transport's. Both
+        // have to hold before an answer is adopted, as IdentityApi requires.
+        reply(500, """{"ok":true,"sessions":[],"primarySessionId":"s-1"}""")
+
+        try {
+            api.list(TOKEN)
+            fail("expected the failed status to be raised")
+        } catch (refused: IdentityRefused) {
+            assertEquals(500, refused.status)
+        }
+    }
+
     private companion object {
         const val TOKEN = "cred-alice"
+
+        /** `Date.now()` milliseconds, the shape `expose` actually sends. */
+        const val CREATED_AT = 1_760_000_000_000L
     }
 }

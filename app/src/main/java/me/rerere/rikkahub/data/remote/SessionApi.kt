@@ -17,13 +17,19 @@ import java.io.IOException
  * client must never read meaning out of it — in particular [owner] is not parsed
  * out of the id to decide who may read it. Authorization is the backend's job;
  * this is a projection of what it already decided.
+ *
+ * [createdAt] is the backend's own creation instant, passed through untouched:
+ * the product exposes `createdAt: header.createdAt` from a header whose value is
+ * `Date.now()` milliseconds (backend/sessions/src/service.mjs, `expose`), so on
+ * the wire it is a number. It is decoded as the number it is rather than
+ * accepting a second shape the server never sends.
  */
 @Serializable
 data class OwnedSession(
     val id: String,
     val owner: String = "",
     val primary: Boolean = false,
-    val createdAt: String = "",
+    val createdAt: Long = 0L,
 )
 
 /** The account's sessions together with the one that is permanently its main. */
@@ -136,7 +142,11 @@ class SessionApi(
                 ?: throw IdentityUnreachable(
                     IllegalStateException("the backend answered ${it.code} with an unreadable document"),
                 )
-            if (!envelope.ok) {
+            if (!envelope.ok || !it.isSuccessful) {
+                // A `200`-shaped body does not make a failed status a success.
+                // Both have to agree before the answer is adopted, exactly as
+                // IdentityApi requires, and a genuine refusal keeps the status
+                // and the backend's own code so the failure stays meaningful.
                 val failure = envelope.error
                 throw IdentityRefused(
                     status = it.code,

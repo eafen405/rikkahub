@@ -20,7 +20,17 @@ data class SessionsSnapshot(
     val selectedId: String? = null,
     val loading: Boolean = false,
     val failure: String? = null,
-)
+) {
+    companion object {
+        /**
+         * Marks "the backend could not be reached", which carries no message of
+         * its own to show. The page renders it with the same localized
+         * `identity_unreachable` text the sign-in pages already use, so the state
+         * stays a plain value with no dependency on resources.
+         */
+        const val UNREACHABLE: String = "identity-unreachable"
+    }
+}
 
 /**
  * The sessions one account is allowed to see, held only as long as that account
@@ -130,9 +140,16 @@ class OwnedSessionState(
      *
      * The answer is folded into the snapshot at the moment it lands rather than
      * when it was asked for, so the page always shows the newest settled state.
+     *
+     * One action at a time. A button that is disabled by [SessionsSnapshot.loading]
+     * can still be tapped again before the page has recomposed, so the guard is
+     * also checked here, where it cannot be raced. [bind] installs a fresh
+     * snapshot with `loading = false`, so a new account is never blocked by a
+     * request that belonged to the previous one.
      */
     private fun request(operation: suspend (String, SessionsSnapshot) -> SessionsSnapshot) {
         val token = bound ?: return
+        if (_snapshot.value.loading) return
         val started = epoch
         _snapshot.value = _snapshot.value.copy(loading = true, failure = null)
         scope.launch {
@@ -144,7 +161,10 @@ class OwnedSessionState(
                 return@launch
             } catch (unreachable: IdentityUnreachable) {
                 if (started != epoch) return@launch
-                _snapshot.value = _snapshot.value.settled()
+                // Being unable to reach the backend is still something to say:
+                // clearing the loading flag alone left the page looking as if
+                // the tap had done nothing at all.
+                _snapshot.value = _snapshot.value.settled(failure = SessionsSnapshot.UNREACHABLE)
                 return@launch
             }
             if (started == epoch) _snapshot.value = settled.settled()

@@ -30,6 +30,7 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.remote.AccountSession
 import me.rerere.rikkahub.data.remote.OwnedSessionState
 import me.rerere.rikkahub.data.remote.SessionBackend
+import me.rerere.rikkahub.data.remote.SessionsSnapshot
 import org.koin.compose.koinInject
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.res.stringResource
@@ -112,7 +113,13 @@ fun IdentitySessionsPage(
             snapshot.failure?.let { message ->
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    text = message,
+                    // A failure that is not text the backend wrote is shown with
+                    // the same localized copy the sign-in pages already use.
+                    text = if (message == SessionsSnapshot.UNREACHABLE) {
+                        stringResource(R.string.identity_unreachable)
+                    } else {
+                        message
+                    },
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.bodySmall,
                 )
