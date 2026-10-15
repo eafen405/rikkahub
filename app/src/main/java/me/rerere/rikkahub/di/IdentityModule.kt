@@ -4,6 +4,8 @@ import android.content.Context
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import me.rerere.rikkahub.data.remote.RemoteAttachmentApi
+import me.rerere.rikkahub.data.remote.RemoteAttachmentBackend
 import me.rerere.rikkahub.data.remote.RemoteChatApi
 import me.rerere.rikkahub.data.remote.RemoteChatBackend
 import me.rerere.rikkahub.data.remote.RemoteChatState
@@ -48,12 +50,14 @@ val identityModule = module {
         RemoteChatApi(baseUrl = identityEndpoint, client = get<OkHttpClient>())
     }
 
+    single<RemoteAttachmentBackend> { RemoteAttachmentApi(identityEndpoint, get<OkHttpClient>()) }
+
     single<ChatSyncStore> { AndroidChatSyncStore(get<Context>()) }
 
     single {
         RemoteChatState(
             get<RemoteChatBackend>(), CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
-            get<ChatSyncStore>(), identityEndpoint,
+            get<ChatSyncStore>(), identityEndpoint, attachmentsBackend = get<RemoteAttachmentBackend>(),
         )
     }
 
