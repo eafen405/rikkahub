@@ -14,6 +14,34 @@ plugins {
     alias(libs.plugins.baselineprofile)
 }
 
+// Backend address supplied at build time; deployment examples are in README.
+val identityEndpointProperty = "ourfairy.identityEndpoint"
+
+/** The host machine as seen from an Android emulator — a debug convenience only. */
+val emulatorIdentityEndpoint = "http://10.0.2.2:3080"
+
+/** The configured address, or null when this build was not told one. */
+val configuredIdentityEndpoint: String? =
+    providers.gradleProperty(identityEndpointProperty).orNull?.trim()?.takeIf { it.isNotEmpty() }
+
+/** Quote [endpoint] as a Java string literal, since it lands in generated source. */
+fun identityEndpointField(endpoint: String): String =
+    "\"" + endpoint.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+// Guard the generation task so indirect release builds require the address too.
+tasks.matching { it.name == "generateReleaseBuildConfig" }.configureEach {
+    val configured = configuredIdentityEndpoint
+    val propertyName = identityEndpointProperty
+    doFirst {
+        if (configured == null) {
+            throw GradleException(
+                "A release build must be told where the OurFairy backend is:\n" +
+                    "  ./gradlew assembleRelease -P$propertyName=https://<host>"
+            )
+        }
+    }
+}
+
 android {
     namespace = "me.rerere.rikkahub"
     compileSdk {
@@ -81,11 +109,21 @@ android {
             }
             buildConfigField("String", "VERSION_NAME", "\"${android.defaultConfig.versionName}\"")
             buildConfigField("String", "VERSION_CODE", "\"${android.defaultConfig.versionCode}\"")
+            buildConfigField(
+                "String",
+                "IDENTITY_ENDPOINT",
+                identityEndpointField(configuredIdentityEndpoint.orEmpty()),
+            )
         }
         debug {
             applicationIdSuffix = ".debug"
             buildConfigField("String", "VERSION_NAME", "\"${android.defaultConfig.versionName}\"")
             buildConfigField("String", "VERSION_CODE", "\"${android.defaultConfig.versionCode}\"")
+            buildConfigField(
+                "String",
+                "IDENTITY_ENDPOINT",
+                identityEndpointField(configuredIdentityEndpoint ?: emulatorIdentityEndpoint),
+            )
         }
     }
     compileOptions {

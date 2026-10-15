@@ -32,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -90,6 +91,7 @@ import me.rerere.rikkahub.ui.identity.IdentityNotReadyPage
 import me.rerere.rikkahub.ui.identity.IdentityRegisterPage
 import me.rerere.rikkahub.ui.identity.IdentityScope
 import me.rerere.rikkahub.ui.identity.IdentitySignInPage
+import me.rerere.rikkahub.ui.identity.restoreIdentitySession
 import me.rerere.rikkahub.ui.pages.assistant.AssistantPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantBasicPage
 import me.rerere.rikkahub.ui.pages.assistant.detail.AssistantDetailPage
@@ -297,23 +299,26 @@ class RouteActivity : ComponentActivity() {
         val session = koinInject<AccountSession>()
         var identityRevision by remember { mutableIntStateOf(0) }
         val identityUser = remember(identityRevision) { session.user }
-        LaunchedEffect(Unit) {
-            // A credential left from a previous run is re-established before the
-            // gate decides where to land, so a returning user is not asked to
-            // sign in again — and a credential the backend rejects is dropped.
-            session.restore()
-            identityRevision += 1
-        }
+        // Keep destinations behind the loading indicator until restoration finishes.
+        var identitySettled by remember { mutableStateOf(false) }
 
         val identityScope = IdentityScope(signedIn = identityUser != null, isAdmin = identityUser?.isAdmin == true)
 
-        val startScreen: Screen = if (identityScope.signedIn) Screen.Account else Screen.SignIn
-
-        val backStack = rememberNavBackStack(startScreen)
+        // Startup replaces this provisional stack with the restored identity landing page.
+        val backStack = rememberNavBackStack(Screen.SignIn)
         SideEffect {
             navStack = backStack
             while (pendingIntents.isNotEmpty()) {
                 handleIntent(pendingIntents.removeFirst())
+            }
+        }
+        LaunchedEffect(Unit) {
+            // Normalize once at startup; later navigation still passes through the gate.
+            try {
+                restoreIdentitySession(session, backStack)
+            } finally {
+                identityRevision += 1
+                identitySettled = true
             }
         }
 
@@ -347,7 +352,14 @@ class RouteActivity : ComponentActivity() {
                     // is what makes the old local-execution and system-management
                     // paths impassable instead of merely unlisted.
                     val gated = (backStack.lastOrNull() as? Screen)?.toIdentityDestination()
-                    if (IdentityAccessPolicy.mayCompose(gated, identityScope)) {
+                    when {
+                        // The session has not said yet who this app is, so there is
+                        // nothing to judge and nowhere to land.
+                        !identitySettled -> CircularProgressIndicator(
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+
+                        IdentityAccessPolicy.mayCompose(gated, identityScope) -> {
                         NavDisplay(
                         backStack = backStack,
                         entryDecorators = listOf(
@@ -640,7 +652,7 @@ class RouteActivity : ComponentActivity() {
                             }
                         }
                         )
-                    } else {
+                    } else -> {
                         IdentityNotReadyPage(
                             identity = identityScope,
                             onSignIn = {
@@ -648,6 +660,7 @@ class RouteActivity : ComponentActivity() {
                                 backStack.add(Screen.SignIn)
                             },
                         )
+                    }
                     }
                     if (BuildConfig.DEBUG) {
                         Text(

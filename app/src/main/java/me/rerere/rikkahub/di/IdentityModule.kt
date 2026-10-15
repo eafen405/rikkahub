@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.di
 
 import android.content.Context
+import me.rerere.rikkahub.BuildConfig
 import me.rerere.rikkahub.data.remote.AccountSession
 import me.rerere.rikkahub.data.remote.AndroidKeystoreCredentialStore
 import me.rerere.rikkahub.data.remote.CredentialStore
@@ -9,15 +10,8 @@ import me.rerere.rikkahub.data.remote.IdentityBackend
 import okhttp3.OkHttpClient
 import org.koin.dsl.module
 
-/**
- * Where this build reaches the OurFairy backend.
- *
- * `10.0.2.2` is the host machine as seen from an Android emulator. A build for a
- * phone has to point at wherever that backend actually is, which is a
- * deployment concern rather than a code one — note it as such instead of
- * pretending a hardcoded host ships.
- */
-const val IDENTITY_BASE_URL: String = "http://10.0.2.2:3080"
+/** Build-time deployment address; release requires an explicit Gradle property. */
+private val identityEndpoint: String = BuildConfig.IDENTITY_ENDPOINT
 
 /**
  * The identity wiring: one credential store, one API over the app's shared HTTP
@@ -33,7 +27,7 @@ val identityModule = module {
     }
 
     single<IdentityBackend> {
-        IdentityApi(baseUrl = IDENTITY_BASE_URL, client = get<OkHttpClient>())
+        IdentityApi(baseUrl = identityEndpoint, client = get<OkHttpClient>())
     }
 
     single {
