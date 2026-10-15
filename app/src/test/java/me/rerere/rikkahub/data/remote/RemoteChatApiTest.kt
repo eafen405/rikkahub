@@ -362,6 +362,27 @@ class RemoteChatApiTest {
         assertTrue(observing.isCancelled)
     }
 
+    @Test
+    fun `backward page preserves fixed through cut and non message event coverage`() = runTest {
+        reply(200, """{"ok":true,"page":{"sessionId":"s-1","throughSeq":9,"fromSeq":2,"beforeSeq":2,"hasMore":true,"events":[{"seq":2,"type":"turn/start","extra":"unchanged"}],"messages":[]}}""")
+        val page = api.page(TOKEN, "s-1", 9, 3)
+        assertEquals("/chat/page", onlyRequest().path)
+        assertEquals("""{"sessionId":"s-1","throughSeq":9,"beforeSeq":3}""", onlyRequest().body)
+        assertEquals(9L, page.throughSeq)
+        assertEquals(2L, page.fromSeq)
+        assertTrue(page.messages.isEmpty())
+        assertEquals("unchanged", page.events.single().getValue("extra").jsonPrimitive.content)
+    }
+
+    @Test
+    fun `checkpoint adopts only explicit writer acknowledgement`() = runTest {
+        reply(200, """{"ok":true,"sessionId":"s-1","durableThroughSeq":42}""")
+        assertEquals(42L, api.checkpoint(TOKEN, "s-1"))
+        assertEquals("/chat/checkpoint", onlyRequest().path)
+        assertEquals("Bearer $TOKEN", onlyRequest().authorization)
+        assertEquals("""{"sessionId":"s-1"}""", onlyRequest().body)
+    }
+
     private companion object {
         const val TOKEN = "cred-alice"
         const val TEXT = "  hello\n\tworld  "

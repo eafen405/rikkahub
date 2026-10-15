@@ -48,7 +48,7 @@ fun RemoteChatPanel(
 
     // Keyed to the session so switching sessions never carries a draft across the boundary.
     var draft by remember(snapshot.sessionId) { mutableStateOf("") }
-    val canSend = draft.isNotBlank() && !snapshot.sending && snapshot.pending == null
+    val canSend = snapshot.storageReady && draft.isNotBlank() && !snapshot.sending && snapshot.pending == null
 
     // Resolved here so the helpers below stay ordinary composables rather than reaching for
     // string resources from inside message rendering.
@@ -63,6 +63,13 @@ fun RemoteChatPanel(
             unreachable = unreachable,
             onReconnect = onReconnect,
         )
+
+        if (snapshot.syncing) {
+            Text("正在补齐并保存同步进度…", style = MaterialTheme.typography.bodySmall)
+        }
+        if (snapshot.failure != null && snapshot.syncing) {
+            OutlinedButton(onClick = state::retrySync) { Text("重试同步") }
+        }
 
         snapshot.pending?.let { pending ->
             Spacer(Modifier.height(12.dp))

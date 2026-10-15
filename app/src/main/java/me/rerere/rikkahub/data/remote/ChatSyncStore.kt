@@ -1,0 +1,22 @@
+package me.rerere.rikkahub.data.remote
+
+import kotlinx.serialization.Serializable
+
+data class ChatSyncKey(val endpoint: String, val userShortId: Int, val sessionId: String)
+
+@Serializable
+data class StoredChatSend(val requestId: String, val text: String)
+
+/** Consumption bookkeeping only; history must still reload after process recreation. */
+@Serializable
+data class ChatSyncRecord(
+    val consumedThrough: Long = -1,
+    val initialized: Boolean = false,
+    val pending: StoredChatSend? = null,
+)
+
+interface ChatSyncStore {
+    suspend fun load(key: ChatSyncKey): ChatSyncRecord
+
+    suspend fun save(key: ChatSyncKey, record: ChatSyncRecord)
+}

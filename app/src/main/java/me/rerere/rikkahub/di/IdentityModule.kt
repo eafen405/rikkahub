@@ -8,6 +8,8 @@ import me.rerere.rikkahub.data.remote.RemoteChatApi
 import me.rerere.rikkahub.data.remote.RemoteChatBackend
 import me.rerere.rikkahub.data.remote.RemoteChatState
 import me.rerere.rikkahub.BuildConfig
+import me.rerere.rikkahub.data.remote.AndroidChatSyncStore
+import me.rerere.rikkahub.data.remote.ChatSyncStore
 import me.rerere.rikkahub.data.remote.AccountSession
 import me.rerere.rikkahub.data.remote.AndroidKeystoreCredentialStore
 import me.rerere.rikkahub.data.remote.CredentialStore
@@ -46,8 +48,13 @@ val identityModule = module {
         RemoteChatApi(baseUrl = identityEndpoint, client = get<OkHttpClient>())
     }
 
+    single<ChatSyncStore> { AndroidChatSyncStore(get<Context>()) }
+
     single {
-        RemoteChatState(get<RemoteChatBackend>(), CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate))
+        RemoteChatState(
+            get<RemoteChatBackend>(), CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+            get<ChatSyncStore>(), identityEndpoint,
+        )
     }
 
     single {
