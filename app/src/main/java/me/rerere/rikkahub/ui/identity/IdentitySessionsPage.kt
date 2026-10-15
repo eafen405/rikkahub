@@ -68,7 +68,7 @@ fun IdentitySessionsPage(
 
     val snapshot by state.snapshot.collectAsStateWithLifecycle()
     val chatSnapshot by chat.snapshot.collectAsStateWithLifecycle()
-    LaunchedEffect(token, snapshot.selectedId) { chat.bind(token, snapshot.selectedId) }
+    LaunchedEffect(token, snapshot.selectedId) { chat.bind(token, snapshot.selectedId, session.user?.shortId) }
     DisposableEffect(chat) { onDispose { chat.detach() } }
 
     Scaffold { innerPadding ->
@@ -101,7 +101,7 @@ fun IdentitySessionsPage(
                 Spacer(Modifier.height(16.dp))
                 RemoteChatPanel(
                     state = chat,
-                    onReconnect = { chat.bind(token, snapshot.selectedId) },
+                    onReconnect = { chat.bind(token, snapshot.selectedId, session.user?.shortId) },
                 )
             }
 

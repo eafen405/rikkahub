@@ -9,6 +9,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -50,6 +51,11 @@ data class RemoteChatProjection(
     val attempt: RemoteChatAttempt? = null,
     val replyStatus: Int = 0,
     val error: String? = null,
+    val throughSeq: Long = cursor,
+    val fromSeq: Long = 0,
+    val events: List<JsonObject> = emptyList(),
+    val hasMore: Boolean = false,
+    val beforeSeq: Long? = null,
 )
 
 @Serializable
@@ -58,6 +64,17 @@ data class ChatReceipt(
     val requestId: String,
     val messageId: String,
     val acceptedSeq: Long,
+)
+
+@Serializable
+data class ChatHistoryPage(
+    val sessionId: String,
+    val throughSeq: Long,
+    val fromSeq: Long,
+    val beforeSeq: Long? = null,
+    val hasMore: Boolean = false,
+    val events: List<JsonObject> = emptyList(),
+    val messages: List<RemoteChatMessage> = emptyList(),
 )
 
 interface RemoteChatBackend {
@@ -69,6 +86,10 @@ interface RemoteChatBackend {
 
     suspend fun stop(token: String, sessionId: String)
 
+    suspend fun page(token: String, sessionId: String, throughSeq: Long, beforeSeq: Long): ChatHistoryPage
+
+    suspend fun checkpoint(token: String, sessionId: String): Long
+
     fun observe(token: String, sessionId: String): Flow<RemoteChatProjection>
 }
 
@@ -77,6 +98,8 @@ internal data class ChatEnvelope(
     val ok: Boolean = false,
     val receipt: ChatReceipt? = null,
     val projection: RemoteChatProjection? = null,
+    val page: ChatHistoryPage? = null,
+    val durableThroughSeq: Long? = null,
     val error: Failure? = null,
 ) {
     @Serializable
@@ -88,6 +111,9 @@ private data class SessionRef(val sessionId: String)
 
 @Serializable
 private data class SendDocument(val sessionId: String, val requestId: String, val text: String)
+
+@Serializable
+private data class PageDocument(val sessionId: String, val throughSeq: Long, val beforeSeq: Long)
 
 @Serializable
 private data class ReceiptDocument(val sessionId: String, val requestId: String)
@@ -132,7 +158,15 @@ class RemoteChatApi(
         call("/chat/stop", json.encodeToString(SessionRef(sessionId)), token)
     }
 
-        // Closing this lease never calls stop. Each SSE event replaces the previous snapshot.
+        override suspend fun page(token: String, sessionId: String, throughSeq: Long, beforeSeq: Long): ChatHistoryPage =
+        call("/chat/page", json.encodeToString(PageDocument(sessionId, throughSeq, beforeSeq)), token).page
+            ?: throw IdentityUnreachable(IllegalStateException("the backend omitted the history page"))
+
+    override suspend fun checkpoint(token: String, sessionId: String): Long =
+        call("/chat/checkpoint", json.encodeToString(SessionRef(sessionId)), token).durableThroughSeq
+            ?: throw IdentityUnreachable(IllegalStateException("the backend omitted the durable checkpoint"))
+
+    // Closing this lease never calls stop. Each SSE event replaces the previous snapshot.
     override fun observe(token: String, sessionId: String): Flow<RemoteChatProjection> = callbackFlow {
         val request = request(
             path = "/chat/observe",
