@@ -29,4 +29,20 @@
 
   <string name="identity_working">处理中…</string>
   <string name="identity_unreachable">无法连接后端。</string>
+
+  <string name="sessions_title">我的会话</string>
+  <string name="sessions_explain">这些会话保存在服务器上，只属于你自己的账号。</string>
+  <string name="sessions_refresh_action">刷新</string>
+  <string name="sessions_create_action">新建会话</string>
+  <string name="sessions_signed_out">请先登录以查看你的会话。</string>
+  <string name="sessions_list_title">全部会话</string>
+  <string name="sessions_empty">还没有会话。</string>
+  <string name="sessions_row_title">会话</string>
+  <string name="sessions_row_primary">主会话</string>
+  <string name="sessions_select_action">使用这个会话</string>
+  <string name="sessions_return_primary_action">返回我的主会话</string>
+  <string name="sessions_back_action">返回账号</string>
+  <string name="sessions_selected_title">当前会话</string>
+  <string name="sessions_selected_none">尚未选择会话。</string>
+  <string name="sessions_chat_not_ready">在这个会话里聊天暂时还不能用。</string>
 </resources>

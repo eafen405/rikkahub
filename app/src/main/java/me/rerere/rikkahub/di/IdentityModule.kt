@@ -7,6 +7,8 @@ import me.rerere.rikkahub.data.remote.AndroidKeystoreCredentialStore
 import me.rerere.rikkahub.data.remote.CredentialStore
 import me.rerere.rikkahub.data.remote.IdentityApi
 import me.rerere.rikkahub.data.remote.IdentityBackend
+import me.rerere.rikkahub.data.remote.SessionApi
+import me.rerere.rikkahub.data.remote.SessionBackend
 import okhttp3.OkHttpClient
 import org.koin.dsl.module
 
@@ -28,6 +30,10 @@ val identityModule = module {
 
     single<IdentityBackend> {
         IdentityApi(baseUrl = identityEndpoint, client = get<OkHttpClient>())
+    }
+
+    single<SessionBackend> {
+        SessionApi(baseUrl = identityEndpoint, client = get<OkHttpClient>())
     }
 
     single {
