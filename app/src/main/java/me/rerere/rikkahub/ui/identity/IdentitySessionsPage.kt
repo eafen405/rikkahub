@@ -19,6 +19,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import me.rerere.rikkahub.data.remote.RemoteChatState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -49,6 +51,7 @@ fun IdentitySessionsPage(
     onBack: () -> Unit,
     session: AccountSession = koinInject(),
     backend: SessionBackend = koinInject(),
+    chat: RemoteChatState = koinInject(),
 ) {
     val scope = rememberCoroutineScope()
     val token = session.token
@@ -64,6 +67,9 @@ fun IdentitySessionsPage(
     }
 
     val snapshot by state.snapshot.collectAsStateWithLifecycle()
+    val chatSnapshot by chat.snapshot.collectAsStateWithLifecycle()
+    LaunchedEffect(token, snapshot.selectedId) { chat.bind(token, snapshot.selectedId) }
+    DisposableEffect(chat) { onDispose { chat.detach() } }
 
     Scaffold { innerPadding ->
         Column(
@@ -90,6 +96,14 @@ fun IdentitySessionsPage(
                 selectedId = snapshot.selectedId,
                 loading = snapshot.loading,
             )
+
+            if (token != null && snapshot.selectedId != null && chatSnapshot.sessionId == snapshot.selectedId) {
+                Spacer(Modifier.height(16.dp))
+                RemoteChatPanel(
+                    state = chat,
+                    onReconnect = { chat.bind(token, snapshot.selectedId) },
+                )
+            }
 
             Spacer(Modifier.height(16.dp))
             Row(
@@ -202,13 +216,7 @@ fun IdentitySessionsPage(
 }
 
 /**
- * Which session the user is standing in, and the honest reason there is nothing
- * to type into it yet.
- *
- * The session id is shown because it is what the backend calls this session and
- * the user may need to name it; the honest note is shown because there is
- * genuinely nothing to chat with yet, and pretending otherwise would be a lie
- * the user discovers later rather than now.
+ * The backend's selected session identifier; chat is rendered from the shared remote projection.
  */
 @Composable
 private fun SelectedSessionCard(selectedId: String?, loading: Boolean) {
@@ -222,12 +230,6 @@ private fun SelectedSessionCard(selectedId: String?, loading: Boolean) {
             Text(
                 text = selectedId ?: stringResource(R.string.sessions_selected_none),
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = stringResource(R.string.sessions_chat_not_ready),
-                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (loading) {
