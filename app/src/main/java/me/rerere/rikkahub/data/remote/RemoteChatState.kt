@@ -633,8 +633,9 @@ class RemoteChatState(
         records[selected] ?: store.load(selected).also { records[selected] = it }
     }
     private suspend fun update(selected: ChatSyncKey, change: (ChatSyncRecord) -> ChatSyncRecord): ChatSyncRecord = recordLock.withLock {
-        val next = change(records[selected] ?: store.load(selected))
-        store.save(selected, next)
+        val previous = records[selected] ?: store.load(selected)
+        val next = change(previous)
+        if (next != previous) store.save(selected, next)
         records[selected] = next
         next
     }

@@ -32,16 +32,17 @@ class RemoteReceiveStateTest {
         override suspend fun primary(token: String) = OwnedSession("$token-main", primary = true)
     }
     private class Store : ChatSyncStore {
-        override suspend fun load(key: ChatSyncKey) = ChatSyncRecord()
-        override suspend fun save(key: ChatSyncKey, record: ChatSyncRecord) = Unit
+        val records = mutableMapOf<ChatSyncKey, ChatSyncRecord>()
+        override suspend fun load(key: ChatSyncKey) = records[key] ?: ChatSyncRecord(0, true, notificationThrough = 0)
+        override suspend fun save(key: ChatSyncKey, record: ChatSyncRecord) { records[key] = record }
     }
     private class Chats : RemoteChatBackend {
         val opens = mutableListOf<Pair<String, String>>()
         val closed = mutableListOf<String>()
-        private val updates = MutableSharedFlow<RemoteChatProjection>()
-        override fun observe(token: String, sessionId: String) = updates
+        val updates = mutableMapOf<String, MutableSharedFlow<RemoteChatProjection>>()
+        override fun observe(token: String, sessionId: String) = updates.getOrPut(sessionId) { MutableSharedFlow() }
             .onStart { opens += token to sessionId }.onCompletion { closed += sessionId }
-        override suspend fun checkpoint(token: String, sessionId: String) = -1L
+        override suspend fun checkpoint(token: String, sessionId: String) = 100L
         override suspend fun page(token: String, sessionId: String, throughSeq: Long, beforeSeq: Long) = error("not used")
         override suspend fun read(token: String, sessionId: String) = error("not used")
         override suspend fun send(token: String, sessionId: String, requestId: String, text: String, uploadIds: List<String>) = error("not used")
@@ -93,5 +94,30 @@ class RemoteReceiveStateTest {
         assertFalse(state.openNotification("bob-private"))
         assertEquals("alice-other", state.sessions.value.selectedId)
         assertEquals(listOf("alice" to "alice-other", "alice" to "bob-private"), sessions.authorized)
+    }    @Test fun `one sessions long task does not block another sessions notification and each uses its own position`() = runTest {
+        val store = Store()
+        val backend = Chats()
+        val alerts = mutableListOf<ChatSyncKey>()
+        val platform = object : RemoteNotificationPlatform {
+            override fun isForeground() = false
+            override fun publish(key: ChatSyncKey, preview: String) { alerts += key }
+        }
+        val receiver = RemoteReceiveState(Sessions(), backgroundScope) {
+            RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
+        }
+        receiver.bind("alice", 1); runCurrent()
+        backend.updates.getValue("alice-main").emit(RemoteNotificationStateTest.delivery(1).copy(sessionId = "alice-main",
+            activity = RemoteActivity(2, listOf(2), "alice-main/1", 1, 1))); runCurrent()
+        backend.updates.getValue("alice-other").emit(RemoteNotificationStateTest.delivery(2).copy(sessionId = "alice-other")); runCurrent()
+        assertEquals(listOf("alice-other"), alerts.map { it.sessionId })
+        backend.updates.getValue("alice-main").emit(RemoteNotificationStateTest.delivery(3, 2).copy(sessionId = "alice-main", throughSeq = 1,
+            activity = RemoteActivity(2, listOf(2, 4), "alice-main/1", 1, 3, delivery = RemoteActivityDelivery("alice-main/1", 3)))); runCurrent()
+        assertEquals(listOf("alice-other", "alice-main"), alerts.map { it.sessionId })
+        backend.updates.getValue("alice-main").emit(RemoteNotificationStateTest.delivery(4, 3).copy(sessionId = "alice-main", throughSeq = 1,
+            activity = RemoteActivity(1, episodeId = "alice-main/1", throughSeq = 4,
+                completed = RemoteCompletedActivity("alice-main/1", 1, 4, 3), delivery = RemoteActivityDelivery("alice-main/1", 3)))); runCurrent()
+        assertEquals(2, alerts.size)
+        assertEquals(2, alerts.toSet().size)
     }
+
 }
