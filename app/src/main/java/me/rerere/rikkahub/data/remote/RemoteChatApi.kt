@@ -50,6 +50,10 @@ data class RemoteChatAttempt(
     val text: String,
 )
 
+/** Native end outcome copied by the backend; attempt identity is generation-local. */
+@Serializable
+data class RemoteChatSettlement(val attemptId: String, val seq: Long)
+
 /** A whole backend snapshot. durableThroughSeq is the writer barrier, not a client consumption cursor. */
 @Serializable
 data class RemoteChatProjection(
@@ -69,6 +73,7 @@ data class RemoteChatProjection(
     val beforeSeq: Long? = null,
     val tasks: List<RemoteTask> = emptyList(),
     val activity: RemoteActivity = RemoteActivity(),
+    val settledAttempt: RemoteChatSettlement? = null,
 )
 
 @Serializable

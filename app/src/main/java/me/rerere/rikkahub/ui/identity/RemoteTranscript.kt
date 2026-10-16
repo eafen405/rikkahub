@@ -34,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -61,6 +62,7 @@ internal fun RemoteTranscript(
     downloadEnabled: Boolean,
     onDownload: (RemoteChatMessage, RemoteChatAttachment) -> Unit,
     onFinalPresented: () -> Unit = {},
+    settledAttempt: Pair<String, Long>? = null,
 ) {
     if (messages.isEmpty() && attemptText == null) {
         Card(
@@ -94,10 +96,18 @@ internal fun RemoteTranscript(
     }
     val listState = rememberLazyListState()
     val dragging by listState.interactionSource.collectIsDraggedAsState()
-    val keys = messages.map { it.messageId } +
-        if (attemptText != null && attemptKey != null) listOf("attempt:${attemptKey.first}:${attemptKey.second}") else emptyList()
-    val currentKeys by rememberUpdatedState(keys)
     var reading by remember { mutableStateOf(RemoteReadingPosition()) }
+    val visibleKeys by remember(listState) {
+        derivedStateOf { listState.layoutInfo.visibleItemsInfo.map { it.key.toString() }.toSet() }
+    }
+    val presentation = remember { RemoteTranscriptPresentation() }
+    val rows = presentation.update(
+        messages, attemptText,
+        attemptKey?.takeIf { attemptText != null }?.let { "attempt:${it.first}:${it.second}" },
+        visibleKeys, reading.followTail, settledAttempt,
+    )
+    val keys = rows.map { it.key }
+    val currentKeys by rememberUpdatedState(keys)
     LaunchedEffect(dragging) {
         if (dragging) reading = reading.copy(followTail = false, userScrolling = true)
     }
@@ -122,26 +132,34 @@ internal fun RemoteTranscript(
         modifier = Modifier.fillMaxWidth().height(480.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        items(messages, key = { it.messageId }) { message ->
-            androidx.compose.runtime.key(message.messageId) {
-                // The role, not the status, decides how a line is drawn: Fairy messages keep
-                // using the rich renderer whether they completed, were interrupted or failed.
-                Column(
-                    modifier = if (message.role == 2) Modifier.fillMaxWidth()
-                        .fairyDialogPanel(active = false)
-                        .padding(horizontal = FairyDialogPaddingH, vertical = FairyDialogPaddingV)
-                    else Modifier,
-                ) {
-                    Text(
-                        text = if (message.role == 1) "你" else "Fairy",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        items(rows, key = { it.key }) { row ->
+            val message = row.message
+            val fairy = message == null || message.role == 2
+            Column(
+                modifier = if (fairy) Modifier.fillMaxWidth()
+                    .fairyDialogPanel(active = message == null)
+                    .padding(horizontal = FairyDialogPaddingH, vertical = FairyDialogPaddingV)
+                else Modifier,
+            ) {
+                // Same heading/body geometry before and after a streaming row settles.
+                Text(
+                    text = if (fairy) "Fairy" else "你",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (row.text.isNotBlank()) {
+                    MessageBody(
+                        format = message?.let(::remoteMessageFormat) ?: remoteAttemptFormat(),
+                        text = row.text,
+                        onBeforeFormat = ::preservePosition,
+                        onRichPresented = {
+                            if (row.key == rows.lastOrNull()?.key && attemptText == null) onFinalPresented()
+                        },
+                        foreground = if (fairy) LocalFairyTokens.current.textPrimary else MaterialTheme.colorScheme.onSurface,
+                        presentationRow = row,
                     )
-                    // An attachment-only message has no body to render, and is still a message.
-                    if (message.text.isNotBlank()) {
-                        MessageBody(remoteMessageFormat(message), message.text, onBeforeFormat = ::preservePosition,
-                            onRichPresented = { if (message.messageId == messages.lastOrNull()?.messageId && attemptText == null) onFinalPresented() })
-                    }
+                }
+                if (message != null) {
                     if (message.text.isNotBlank()) {
                         TextButton(onClick = { detail = message }) { Text("查看全文") }
                     }
@@ -158,18 +176,6 @@ internal fun RemoteTranscript(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                }
-            }
-        }
-
-        if (attemptText != null && attemptKey != null) {
-            item(key = "attempt:${attemptKey.first}:${attemptKey.second}") {
-                androidx.compose.foundation.layout.Box(
-                    Modifier.fillMaxWidth().fairyDialogPanel(active = true)
-                        .padding(horizontal = FairyDialogPaddingH, vertical = FairyDialogPaddingV),
-                ) {
-                // Still arriving, so it is shown exactly as it has been produced so far.
-                MessageBody(remoteAttemptFormat(), attemptText, onBeforeFormat = ::preservePosition, foreground = LocalFairyTokens.current.textPrimary)
                 }
             }
         }
@@ -215,6 +221,7 @@ internal fun MessageBody(
     onBeforeFormat: () -> Unit = {},
     onRichPresented: () -> Unit = {},
     foreground: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface,
+    presentationRow: RemoteTranscriptRow? = null,
 ) {
     val settings = me.rerere.rikkahub.ui.context.LocalSettings.current
     val base = MaterialTheme.typography.bodyMedium
@@ -223,22 +230,23 @@ internal fun MessageBody(
         fontFamily = me.rerere.rikkahub.ui.theme.rememberChatFontFamily(settings.displaySetting),
     )
     val input by rememberUpdatedState(RemoteBodyInput(text, format))
-    val beforeFormat by rememberUpdatedState(onBeforeFormat)
     var presentation by remember { mutableStateOf(RemoteBodyPresentation(text)) }
     LaunchedEffect(Unit) {
         remoteBodyPresentations(snapshotFlow { input }) { source ->
             withContext(Dispatchers.Default) { me.rerere.ui.markdown.parseMarkdown(source) }
         }.collect { next ->
-            if (next.document != null) beforeFormat()
             presentation = next
         }
     }
-    val document = presentation.document?.takeIf {
+    val parsed = presentation.document?.takeIf {
         format == RemoteMessageFormat.MARKDOWN && it.source == text
     }
+    val document = if (presentationRow == null) parsed else presentationRow.documentToShow(parsed)
     val richPresented by rememberUpdatedState(onRichPresented)
+    val beforeFormat by rememberUpdatedState(onBeforeFormat)
     LaunchedEffect(document) {
         if (document != null) {
+            beforeFormat()
             androidx.compose.runtime.withFrameNanos { }
             richPresented()
         }

@@ -141,6 +141,8 @@ class PresentationBenchmarkActivity : ComponentActivity() {
                         Text(summary, style = MaterialTheme.typography.bodySmall)
                         RemoteTranscript(messages, attempt, "benchmark" to "tail", false,
                             onDownload = { _, _ -> },
+                            settledAttempt = messages.lastOrNull()?.takeIf { it.messageId == "final" }
+                                ?.let { "attempt:benchmark:tail" to it.seq },
                             onFinalPresented = {
                                 terminalTiming[1] = (SystemClock.elapsedRealtimeNanos() - terminalTiming[0]) / 1_000_000.0
                                 terminalReady.complete(Unit)
