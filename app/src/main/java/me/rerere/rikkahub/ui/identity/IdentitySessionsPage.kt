@@ -19,19 +19,13 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import me.rerere.rikkahub.data.remote.RemoteChatState
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.remote.AccountSession
-import me.rerere.rikkahub.data.remote.OwnedSessionState
-import me.rerere.rikkahub.data.remote.SessionBackend
+import me.rerere.rikkahub.data.remote.RemoteReceiveState
 import me.rerere.rikkahub.data.remote.SessionsSnapshot
 import org.koin.compose.koinInject
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -50,26 +44,16 @@ import androidx.compose.ui.res.stringResource
 fun IdentitySessionsPage(
     onBack: () -> Unit,
     session: AccountSession = koinInject(),
-    backend: SessionBackend = koinInject(),
-    chat: RemoteChatState = koinInject(),
+    state: RemoteReceiveState = koinInject(),
 ) {
-    val scope = rememberCoroutineScope()
-    val token = session.token
-
-    // Keyed to the credential, not merely reset by it: a different account gets
-    // different state, so the previous account's snapshot cannot even be shown
-    // for the frame before the new credential is bound.
-    val state = remember(token, backend) { OwnedSessionState(backend, scope) }
-
-    LaunchedEffect(state) {
-        state.bind(token)
-        if (token != null) state.refresh()
-    }
-
-    val snapshot by state.snapshot.collectAsStateWithLifecycle()
-    val chatSnapshot by chat.snapshot.collectAsStateWithLifecycle()
-    LaunchedEffect(token, snapshot.selectedId) { chat.bind(token, snapshot.selectedId, session.user?.shortId) }
-    DisposableEffect(chat) { onDispose { chat.detach() } }
+    val identity by session.identity.collectAsStateWithLifecycle()
+    val token = identity?.token
+    val received by state.sessions.collectAsStateWithLifecycle()
+    val selectedChat by state.selectedChat.collectAsStateWithLifecycle()
+    // Account publication may precede the app receiver collector by one dispatch.
+    val matches = state.isBoundTo(token, identity?.user?.shortId)
+    val snapshot = if (matches) received else SessionsSnapshot()
+    val chat = selectedChat.takeIf { matches }
 
     Scaffold { innerPadding ->
         Column(
@@ -97,11 +81,11 @@ fun IdentitySessionsPage(
                 loading = snapshot.loading,
             )
 
-            if (token != null && snapshot.selectedId != null && chatSnapshot.sessionId == snapshot.selectedId) {
+            chat?.takeIf { token != null }?.let { selected ->
                 Spacer(Modifier.height(16.dp))
                 RemoteChatPanel(
-                    state = chat,
-                    onReconnect = { chat.bind(token, snapshot.selectedId, session.user?.shortId) },
+                    state = selected,
+                    onReconnect = { state.resumeObservation() },
                 )
             }
 

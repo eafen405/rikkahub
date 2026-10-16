@@ -1,9 +1,6 @@
 package me.rerere.rikkahub.di
 
 import android.content.Context
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
 import me.rerere.rikkahub.data.remote.RemoteAttachmentApi
 import me.rerere.rikkahub.data.remote.RemoteAttachmentBackend
 import me.rerere.rikkahub.data.remote.RemoteChatApi
@@ -11,7 +8,11 @@ import me.rerere.rikkahub.data.remote.RemoteChatBackend
 import me.rerere.rikkahub.data.remote.RemoteJobApi
 import me.rerere.rikkahub.data.remote.RemoteJobBackend
 import me.rerere.rikkahub.data.remote.RemoteChatState
+import me.rerere.rikkahub.AppScope
 import me.rerere.rikkahub.BuildConfig
+import me.rerere.rikkahub.data.remote.RemoteReceiveState
+import me.rerere.rikkahub.service.AndroidRemoteNotifications
+import me.rerere.rikkahub.service.RemoteReceiveController
 import me.rerere.rikkahub.data.remote.AndroidChatSyncStore
 import me.rerere.rikkahub.data.remote.ChatSyncStore
 import me.rerere.rikkahub.data.remote.AccountSession
@@ -58,11 +59,27 @@ val identityModule = module {
 
     single<ChatSyncStore> { AndroidChatSyncStore(get<Context>()) }
 
+    single { AndroidRemoteNotifications(get<Context>()) }
+
     single {
-        RemoteChatState(
-            get<RemoteChatBackend>(), CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
-            get<ChatSyncStore>(), identityEndpoint, attachmentsBackend = get<RemoteAttachmentBackend>(), jobsBackend = get<RemoteJobBackend>(),
-        )
+        val runtimeScope = get<AppScope>()
+        val notifications = get<AndroidRemoteNotifications>()
+        val chatBackend = get<RemoteChatBackend>()
+        val syncStore = get<ChatSyncStore>()
+        val files = get<RemoteAttachmentBackend>()
+        val jobs = get<RemoteJobBackend>()
+        RemoteReceiveState(get<SessionBackend>(), runtimeScope) {
+            RemoteChatState(
+                chatBackend, runtimeScope, syncStore, identityEndpoint,
+                attachmentsBackend = files, jobsBackend = jobs,
+                notifications = notifications, notificationsEnabled = { notifications.enabled.value },
+            )
+        }
+    }
+
+    single {
+        RemoteReceiveController(get<Context>(), get<AccountSession>(), get<RemoteReceiveState>(),
+            get<AndroidRemoteNotifications>(), get<AppScope>())
     }
 
     single {

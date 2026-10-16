@@ -329,6 +329,9 @@ fun IdentityAccountPage(
             }
 
             Spacer(Modifier.height(24.dp))
+            RemoteReceiveSetup()
+
+            Spacer(Modifier.height(24.dp))
             Button(
                 onClick = onSessions,
                 enabled = token != null,

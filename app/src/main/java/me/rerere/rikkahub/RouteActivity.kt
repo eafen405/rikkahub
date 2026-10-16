@@ -31,7 +31,6 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -65,6 +64,9 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.remote.AccountSession
+import me.rerere.rikkahub.service.AndroidRemoteNotifications
+import me.rerere.rikkahub.service.RemoteReceiveController
+import me.rerere.rikkahub.ui.identity.openRemoteNotification
 import me.rerere.rikkahub.data.db.DatabaseMigrationTracker
 import me.rerere.rikkahub.data.db.MigrationState
 import me.rerere.rikkahub.data.event.AppEvent
@@ -165,6 +167,9 @@ class RouteActivity : ComponentActivity() {
     private val settingsStore by inject<SettingsStore>()
     private val mediaCreationRepository by inject<MediaCreationRepository>()
     private var navStack: MutableList<NavKey>? = null
+    private var identityReady = false
+    private val remoteReceiveController by inject<RemoteReceiveController>()
+    private val accountSession by inject<AccountSession>()
     private val pendingIntents = ArrayDeque<Intent>()
 
     // Volume key listener registry — last registered handler wins
@@ -234,9 +239,21 @@ class RouteActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent) {
-        val backStack = navStack ?: run {
+        val backStack = navStack?.takeIf { identityReady } ?: run {
             // Compose 尚未创建导航栈，待就绪后处理。
             pendingIntents.addLast(intent)
+            return
+        }
+        if (intent.action == AndroidRemoteNotifications.ACTION_OPEN_REMOTE) {
+            val target = AndroidRemoteNotifications.target(intent) ?: return
+            lifecycleScope.launch {
+                val opened = openRemoteNotification(target, BuildConfig.IDENTITY_ENDPOINT, accountSession, remoteReceiveController::openNotification)
+                if (opened) {
+                    backStack.clear()
+                    backStack.add(Screen.Account)
+                    backStack.add(Screen.Sessions)
+                }
+            }
             return
         }
         val destination = when (intent.action) {
@@ -294,12 +311,11 @@ class RouteActivity : ComponentActivity() {
         }
         val migrationState by DatabaseMigrationTracker.state.collectAsStateWithLifecycle()
 
-        // Who this app is acting as. The session owns the truth; this revision
-        // counter is how a screen that has just signed in or out tells the gate
-        // to re-read it, since the session is not itself Compose state.
         val session = koinInject<AccountSession>()
-        var identityRevision by remember { mutableIntStateOf(0) }
-        val identityUser = remember(identityRevision) { session.user }
+        // Instantiate app ownership before restore publishes the accepted identity.
+        koinInject<RemoteReceiveController>()
+        val currentIdentity by session.identity.collectAsStateWithLifecycle()
+        val identityUser = currentIdentity?.user
         // Keep destinations behind the loading indicator until restoration finishes.
         var identitySettled by remember { mutableStateOf(false) }
 
@@ -309,8 +325,8 @@ class RouteActivity : ComponentActivity() {
         val backStack = rememberNavBackStack(Screen.SignIn)
         SideEffect {
             navStack = backStack
-            while (pendingIntents.isNotEmpty()) {
-                handleIntent(pendingIntents.removeFirst())
+            if (identitySettled) {
+                while (pendingIntents.isNotEmpty()) handleIntent(pendingIntents.removeFirst())
             }
         }
         LaunchedEffect(Unit) {
@@ -318,7 +334,7 @@ class RouteActivity : ComponentActivity() {
             try {
                 restoreIdentitySession(session, backStack)
             } finally {
-                identityRevision += 1
+                identityReady = true
                 identitySettled = true
             }
         }
@@ -388,7 +404,6 @@ class RouteActivity : ComponentActivity() {
                             entry<Screen.SignIn> {
                                 IdentitySignInPage(
                                     onSignedIn = {
-                                        identityRevision += 1
                                         backStack.clear()
                                         backStack.add(Screen.Account)
                                     },
@@ -402,7 +417,6 @@ class RouteActivity : ComponentActivity() {
                             entry<Screen.Register> {
                                 IdentityRegisterPage(
                                     onRegistered = {
-                                        identityRevision += 1
                                         backStack.clear()
                                         backStack.add(Screen.Account)
                                     },
@@ -423,7 +437,6 @@ class RouteActivity : ComponentActivity() {
                                 IdentityAccountPage(
                                     onSessions = { backStack.add(Screen.Sessions) },
                                     onSignedOut = {
-                                        identityRevision += 1
                                         backStack.clear()
                                         backStack.add(Screen.SignIn)
                                     },
