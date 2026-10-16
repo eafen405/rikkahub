@@ -94,6 +94,8 @@ class RemoteChatState(
     private val retryDelayMillis: Long = 1_000,
     private val attachmentsBackend: RemoteAttachmentBackend? = null,
     private val jobsBackend: RemoteJobBackend? = null,
+    private val notifications: RemoteNotificationPlatform? = null,
+    private val notificationsEnabled: () -> Boolean = { true },
 ) {
     private val mutable = MutableStateFlow(RemoteChatSnapshot())
     val snapshot: StateFlow<RemoteChatSnapshot> = mutable.asStateFlow()
@@ -251,15 +253,44 @@ class RemoteChatState(
                 val target = minOf(latest.cursor, acknowledged)
                 require(covered(target)) { "历史范围尚未完整补齐" }
                 val old = load(selected)
-                if (target > old.consumedThrough || !old.initialized) {
-                    val saved = update(selected) { record ->
-                        record.copy(consumedThrough = maxOf(record.consumedThrough, target), initialized = true)
+                var notification: String? = null
+                val activity = latest.activity
+                // Only a complete, acknowledged snapshot can establish notification facts.
+                val settleNotifications = notifications != null && activity.status != 0 &&
+                    target >= latest.cursor && target >= activity.throughSeq
+                val facts = listOfNotNull(
+                    activity.completed?.let { it.finishedSeq to it.episodeId },
+                    activity.delivery?.let { it.seq to it.episodeId },
+                ).sortedBy { it.first }
+                val saved = update(selected) { record ->
+                    var next = record.copy(consumedThrough = maxOf(record.consumedThrough, target), initialized = true)
+                    if (settleNotifications) {
+                        val through = record.notificationThrough
+                        val candidate = facts.lastOrNull {
+                            through != null && it.first > through && it.first <= target && it.second != record.notificationEpisodeId
+                        }
+                        notification = candidate?.second
+                        next = next.copy(
+                            notificationThrough = maxOf(through ?: -1, target),
+                            notificationEpisodeId = candidate?.second ?: record.notificationEpisodeId
+                                ?: facts.lastOrNull { it.first <= target }?.second,
+                        )
                     }
-                    if (!currentGeneration()) return@launch
-                    mutable.value = mutable.value.copy(
-                        consumedThrough = saved.consumedThrough, initialized = true,
-                        batch = ChatConsumptionBatch(selected, latest.generation, old.consumedThrough, saved.consumedThrough, !old.initialized),
-                    )
+                    next
+                }
+                if (!currentGeneration()) return@launch
+                mutable.value = mutable.value.copy(
+                    consumedThrough = saved.consumedThrough, initialized = true,
+                    batch = if (target > old.consumedThrough || !old.initialized) {
+                        ChatConsumptionBatch(selected, latest.generation, old.consumedThrough, saved.consumedThrough, !old.initialized)
+                    } else mutable.value.batch,
+                )
+                // Commit-before-attempt: a crash here may miss a sound, but cannot replay it.
+                // Read foreground now, after awaited disk work, for every page in the app.
+                if (notification != null && notificationsEnabled() && notifications?.isForeground() == false) {
+                    val preview = latest.messages.lastOrNull { it.role == 2 && it.seq <= target }?.text
+                        ?.take(160)?.ifBlank { null } ?: "Fairy 已完成本次活动"
+                    notifications.publish(selected, preview)
                 }
                 val pending = load(selected).pending
                 if (pending != null && latest.messages.any { it.requestId == pending.requestId && it.seq <= acknowledged }) {
@@ -602,8 +633,9 @@ class RemoteChatState(
         records[selected] ?: store.load(selected).also { records[selected] = it }
     }
     private suspend fun update(selected: ChatSyncKey, change: (ChatSyncRecord) -> ChatSyncRecord): ChatSyncRecord = recordLock.withLock {
-        val next = change(records[selected] ?: store.load(selected))
-        store.save(selected, next)
+        val previous = records[selected] ?: store.load(selected)
+        val next = change(previous)
+        if (next != previous) store.save(selected, next)
         records[selected] = next
         next
     }

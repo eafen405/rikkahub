@@ -55,6 +55,8 @@ class RemoteReceiveState(
         if (token != null && userShortId != null) owned.refresh()
     }
 
+    fun isBoundTo(token: String?, userShortId: Int?): Boolean = token == this.token && userShortId == this.userShortId
+
     fun stateForSession(sessionId: String): RemoteChatState? = chats[sessionId]
     fun refresh() = owned.refresh()
     fun create() = owned.create()
