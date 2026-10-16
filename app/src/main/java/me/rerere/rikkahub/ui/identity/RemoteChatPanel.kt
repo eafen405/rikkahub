@@ -153,7 +153,8 @@ fun RemoteChatPanel(
                 snapshot.connecting -> FairyPresence.CONNECTING
                 !snapshot.connected -> FairyPresence.OFFLINE
                 snapshot.activity.status == 2 -> FairyPresence.THINKING
-                else -> FairyPresence.IDLE
+                snapshot.activity.status == 1 -> FairyPresence.IDLE
+                else -> FairyPresence.CONNECTING
             },
             eyeSize = 110.dp,
             modifier = Modifier.fillMaxWidth().height(150.dp),
