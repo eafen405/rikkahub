@@ -71,7 +71,15 @@ data class RemoteChatSnapshot(
     val downloading: Boolean = false,
     val attachmentNotice: String? = null,
     val taskDetail: RemoteTaskDetail? = null,
-)
+) {
+    /** Backend facts stay intact; incomplete observation/recovery cannot establish silence. */
+    val activity: RemoteActivity
+        get() {
+            val reported = projection?.activity ?: RemoteActivity()
+            return if (connected && !syncing && initialized && consumedThrough >= reported.throughSeq) reported
+            else reported.copy(status = 0)
+        }
+}
 enum class RemoteMessageFormat { PLAIN, MARKDOWN }
 fun remoteMessageFormat(message: RemoteChatMessage) =
     if (message.role == 2) RemoteMessageFormat.MARKDOWN else RemoteMessageFormat.PLAIN

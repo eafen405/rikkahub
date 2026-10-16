@@ -148,6 +148,9 @@ fun RemoteChatPanel(
             onReconnect = onReconnect,
         )
 
+        Spacer(Modifier.height(12.dp))
+        RemoteActivityCard(snapshot.activity)
+
         if (snapshot.syncing) {
             Text("正在补齐并保存同步进度…", style = MaterialTheme.typography.bodySmall)
         }
