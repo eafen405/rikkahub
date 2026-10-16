@@ -2,6 +2,8 @@ package me.rerere.rikkahub.di
 
 import android.content.Context
 import me.rerere.rikkahub.data.remote.RemoteAttachmentApi
+import me.rerere.rikkahub.data.remote.RemoteSpeechApi
+import me.rerere.rikkahub.data.remote.RemoteSpeechBackend
 import me.rerere.rikkahub.data.remote.RemoteAttachmentBackend
 import me.rerere.rikkahub.data.remote.RemoteChatApi
 import me.rerere.rikkahub.data.remote.RemoteChatBackend
@@ -55,6 +57,8 @@ val identityModule = module {
 
     single<RemoteAttachmentBackend> { RemoteAttachmentApi(identityEndpoint, get<OkHttpClient>()) }
 
+    single<RemoteSpeechBackend> { RemoteSpeechApi(identityEndpoint, get<OkHttpClient>()) }
+
     single<RemoteJobBackend> { RemoteJobApi(identityEndpoint, get<OkHttpClient>()) }
 
     single<ChatSyncStore> { AndroidChatSyncStore(get<Context>()) }
@@ -72,6 +76,7 @@ val identityModule = module {
             RemoteChatState(
                 chatBackend, runtimeScope, syncStore, identityEndpoint,
                 attachmentsBackend = files, jobsBackend = jobs,
+                speechBackend = get<RemoteSpeechBackend>(),
                 notifications = notifications, notificationsEnabled = { notifications.enabled.value },
             )
         }
