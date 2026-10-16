@@ -10,6 +10,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import me.rerere.rikkahub.ui.fairy.FairyScreen
+import me.rerere.rikkahub.ui.fairy.FairyPresence
+import me.rerere.rikkahub.ui.fairy.ProvideAgoraMotionPolicy
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -41,7 +45,6 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Delete02
-import me.rerere.hugeicons.stroke.Download01
 import me.rerere.hugeicons.stroke.File01
 import me.rerere.hugeicons.stroke.Refresh
 import me.rerere.rikkahub.R
@@ -49,12 +52,8 @@ import me.rerere.rikkahub.data.remote.RemoteAttachmentDraft
 import me.rerere.rikkahub.data.remote.RemoteChatAttachment
 import me.rerere.rikkahub.data.remote.RemoteChatMessage
 import me.rerere.rikkahub.data.remote.RemoteChatState
-import me.rerere.rikkahub.data.remote.RemoteMessageFormat
 import me.rerere.rikkahub.data.remote.SessionsSnapshot
-import me.rerere.rikkahub.data.remote.remoteAttemptFormat
-import me.rerere.rikkahub.data.remote.remoteMessageFormat
 import me.rerere.rikkahub.ui.components.message.ChatMessageFileChip
-import me.rerere.rikkahub.ui.components.richtext.MarkdownBlock
 
 /**
  * A save target carries no usable media type of its own, so the download is written as opaque
@@ -149,6 +148,17 @@ fun RemoteChatPanel(
         )
 
         Spacer(Modifier.height(12.dp))
+        ProvideAgoraMotionPolicy(appReduceMotion = false) { FairyScreen(
+            presence = when {
+                snapshot.connecting -> FairyPresence.CONNECTING
+                !snapshot.connected -> FairyPresence.OFFLINE
+                snapshot.activity.status == 2 -> FairyPresence.THINKING
+                else -> FairyPresence.IDLE
+            },
+            eyeSize = 110.dp,
+            modifier = Modifier.fillMaxWidth().height(150.dp),
+        )
+        }
         RemoteActivityCard(snapshot.activity)
 
         if (snapshot.syncing) {
@@ -193,8 +203,9 @@ fun RemoteChatPanel(
             onStop = state::stopTask,
         )
 
+        RemoteDisplayPreferences()
         Spacer(Modifier.height(12.dp))
-        Transcript(
+        key(snapshot.attachmentEpoch) { RemoteTranscript(
             messages = projection?.messages.orEmpty(),
             attemptText = projection?.attempt?.text,
             attemptKey = projection?.let { it.generation to it.attempt?.attemptId },
@@ -207,6 +218,7 @@ fun RemoteChatPanel(
             },
         )
 
+        }
         Spacer(Modifier.height(12.dp))
         Composer(
             draft = draft,
@@ -277,111 +289,6 @@ private fun ConnectionHeader(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun Transcript(
-    messages: List<RemoteChatMessage>,
-    attemptText: String?,
-    attemptKey: Pair<String, String?>?,
-    downloadEnabled: Boolean,
-    onDownload: (RemoteChatMessage, RemoteChatAttachment) -> Unit,
-) {
-    if (messages.isEmpty() && attemptText == null) {
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-            ),
-        ) {
-            Text(
-                text = "此会话还没有消息。",
-                modifier = Modifier.padding(16.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        return
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        messages.forEach { message ->
-            key(message.messageId) {
-                // The role, not the status, decides how a line is drawn: Fairy messages keep
-                // using the rich renderer whether they completed, were interrupted or failed.
-                Column {
-                    Text(
-                        text = if (message.role == 1) "你" else "Fairy",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    // An attachment-only message has no body to render, and is still a message.
-                    if (message.text.isNotBlank()) {
-                        MessageBody(remoteMessageFormat(message), message.text)
-                    }
-                    if (message.attachments.isNotEmpty()) {
-                        Spacer(Modifier.height(6.dp))
-                        AttachmentChips(message.attachments, downloadEnabled) { attachment ->
-                            onDownload(message, attachment)
-                        }
-                    }
-                    if (message.status == 3 || message.status == 4) {
-                        Text(
-                            text = if (message.status == 3) "已停止" else "回复失败",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-        }
-
-        if (attemptText != null && attemptKey != null) {
-            key("attempt", attemptKey.first, attemptKey.second) {
-                // Still arriving, so it is shown exactly as it has been produced so far.
-                MessageBody(remoteAttemptFormat(), attemptText)
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun AttachmentChips(
-    attachments: List<RemoteChatAttachment>,
-    downloadEnabled: Boolean,
-    onDownload: (RemoteChatAttachment) -> Unit,
-) {
-    // Original name and original size, because that is what the backend recorded and what the
-    // download will produce. No preview, no thumbnail, nothing derived from the bytes.
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        attachments.forEach { attachment ->
-            key(attachment.index) {
-                ChatMessageFileChip(
-                    text = "${attachment.name} · ${attachmentSizeLabel(attachment.bytes)}",
-                    onClick = { if (downloadEnabled) onDownload(attachment) },
-                    icon = {
-                        Icon(
-                            imageVector = HugeIcons.Download01,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                        )
-                    },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun MessageBody(format: RemoteMessageFormat, text: String) {
-    if (format == RemoteMessageFormat.MARKDOWN) {
-        MarkdownBlock(content = text)
-    } else {
-        Text(text = text, style = MaterialTheme.typography.bodyMedium)
     }
 }
 

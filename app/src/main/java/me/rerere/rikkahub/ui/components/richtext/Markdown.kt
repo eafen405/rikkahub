@@ -129,7 +129,8 @@ fun MarkdownBlock(
     content: String,
     modifier: Modifier = Modifier,
     style: TextStyle = LocalTextStyle.current,
-    onClickCitation: (String) -> Unit = {}
+    onClickCitation: (String) -> Unit = {},
+    document: me.rerere.ui.markdown.MarkdownDocument? = null,
 ) {
     val enableLatexRendering = LocalSettings.current.displaySetting.enableLatexRendering
     val fontSize = LocalTextStyle.current.merge(style).fontSize
@@ -186,7 +187,7 @@ fun MarkdownBlock(
     }
 
     Markdown(
-        content = content,
+        document = document ?: me.rerere.ui.markdown.rememberMarkdownDocument(content),
         modifier = modifier.padding(horizontal = 4.dp),
         style = style,
         theme = theme,
