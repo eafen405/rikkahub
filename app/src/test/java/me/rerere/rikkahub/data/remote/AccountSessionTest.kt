@@ -210,4 +210,18 @@ class AccountSessionTest {
         assertNull("a revoked credential must not linger on the device", store.load())
         assertNull(session.token)
     }
+    @Test fun `restored sign in and sign out publish one authoritative identity flow`() = runTest {
+        val backend = GatedBackend()
+        val store = RecordingStore("token-first")
+        val session = AccountSession(backend, store)
+        assertNull(session.identity.value)
+        backend.release("first", SignedIn("token-first", user(2, "first")))
+        session.restore()
+        assertEquals("token-first", session.identity.value!!.token)
+        assertEquals(session.user, session.identity.value!!.user)
+        session.signOut()
+        assertNull(session.identity.value)
+        assertNull(session.token)
+    }
+
 }

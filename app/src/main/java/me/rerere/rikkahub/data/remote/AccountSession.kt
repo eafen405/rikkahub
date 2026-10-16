@@ -1,5 +1,8 @@
 package me.rerere.rikkahub.data.remote
 
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -33,13 +36,10 @@ class AccountSession(
     private val mutex = Mutex()
     private var generation = 0L
 
-    @Volatile
-    var user: IdentityUser? = null
-        private set
-
-    @Volatile
-    var token: String? = null
-        private set
+    private val mutableIdentity = MutableStateFlow<SignedIn?>(null)
+    val identity: StateFlow<SignedIn?> = mutableIdentity.asStateFlow()
+    val user: IdentityUser? get() = identity.value?.user
+    val token: String? get() = identity.value?.token
 
     val isSignedIn: Boolean get() = token != null
 
@@ -78,8 +78,8 @@ class AccountSession(
         }
         return mutex.withLock {
             if (generation != attempt) return@withLock null
-            user = restored
-            token = stored
+            mutableIdentity.value = SignedIn(stored, restored)
+            onAccountChanged()
             restored
         }
     }
@@ -95,8 +95,7 @@ class AccountSession(
         val revoked = mutex.withLock {
             generation += 1
             val held = token
-            user = null
-            token = null
+            mutableIdentity.value = null
             store.clear()
             onAccountChanged()
             held
@@ -114,9 +113,8 @@ class AccountSession(
 
     private suspend fun adopt(attempt: Long, signedIn: SignedIn): IdentityUser = mutex.withLock {
         if (generation != attempt) throw StaleAccountAnswer()
-        user = signedIn.user
-        token = signedIn.token
         store.save(signedIn.token)
+        mutableIdentity.value = signedIn
         onAccountChanged()
         signedIn.user
     }
