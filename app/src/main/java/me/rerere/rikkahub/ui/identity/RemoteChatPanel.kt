@@ -88,10 +88,11 @@ fun RemoteChatPanel(
     var selectionEpoch by remember(snapshot.attachmentEpoch) { mutableStateOf<Long?>(null) }
     var pendingDownload by remember(snapshot.attachmentEpoch) { mutableStateOf<PendingDownload?>(null) }
 
+    var speechBusy by remember(snapshot.attachmentEpoch) { mutableStateOf(false) }
     val drafts = snapshot.attachments
     // Draft editing is frozen while a command is unresolved: the pending record already holds
     // this message's text and upload ids, and changing the draft would contradict a resend.
-    val frozen = !snapshot.storageReady || snapshot.sending || snapshot.pending != null
+    val frozen = !snapshot.storageReady || snapshot.sending || snapshot.pending != null || speechBusy
     val uploadsSettled = drafts.all { it.uploadId != null && !it.uploading }
     // Text may be empty as long as files are attached; neither may be empty.
     val canSend = snapshot.storageReady && !frozen && uploadsSettled &&
@@ -208,6 +209,14 @@ fun RemoteChatPanel(
         )
 
         Spacer(Modifier.height(12.dp))
+        RemoteSpeechInput(
+            state = state,
+            epoch = snapshot.attachmentEpoch,
+            enabled = !frozen,
+            readDraft = { draft },
+            writeDraft = { draft = it },
+            onBusy = { speechBusy = it },
+        )
         Composer(
             draft = draft,
             onDraftChange = { draft = it },

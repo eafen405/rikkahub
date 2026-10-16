@@ -96,6 +96,7 @@ class RemoteChatState(
     private val jobsBackend: RemoteJobBackend? = null,
     private val notifications: RemoteNotificationPlatform? = null,
     private val notificationsEnabled: () -> Boolean = { true },
+    private val speechBackend: RemoteSpeechBackend? = null,
 ) {
     private val mutable = MutableStateFlow(RemoteChatSnapshot())
     val snapshot: StateFlow<RemoteChatSnapshot> = mutable.asStateFlow()
@@ -117,6 +118,20 @@ class RemoteChatState(
     private var download: Job? = null
     private var taskObserver: Job? = null
     private var taskEpoch = 0L
+
+    suspend fun speechAvailability(expectedEpoch: Long): RemoteSpeechAvailability {
+        check(expectedEpoch == attachmentEpoch)
+        val credential = checkNotNull(token)
+        return checkNotNull(speechBackend).availability(credential)
+    }
+
+    suspend fun transcribeSpeech(expectedEpoch: Long, wav: ByteArray): String {
+        check(expectedEpoch == attachmentEpoch)
+        val credential = checkNotNull(token)
+        val text = checkNotNull(speechBackend).transcribe(credential, wav)
+        check(expectedEpoch == attachmentEpoch && credential == token)
+        return text
+    }
 
     fun bind(credential: String?, selectedSessionId: String?, userShortId: Int?) {
         val selected = if (selectedSessionId != null && userShortId != null) {
