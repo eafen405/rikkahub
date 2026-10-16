@@ -181,6 +181,15 @@ fun RemoteChatPanel(
             }
         }
 
+        RemoteTaskCards(
+            tasks = projection?.tasks.orEmpty(),
+            detail = snapshot.taskDetail,
+            connected = snapshot.connected,
+            onOpen = state::observeTaskOutput,
+            onClose = state::closeTaskOutput,
+            onStop = state::stopTask,
+        )
+
         Spacer(Modifier.height(12.dp))
         Transcript(
             messages = projection?.messages.orEmpty(),

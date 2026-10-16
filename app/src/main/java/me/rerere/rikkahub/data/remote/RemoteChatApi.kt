@@ -67,6 +67,7 @@ data class RemoteChatProjection(
     val events: List<JsonObject> = emptyList(),
     val hasMore: Boolean = false,
     val beforeSeq: Long? = null,
+    val tasks: List<RemoteTask> = emptyList(),
 )
 
 @Serializable

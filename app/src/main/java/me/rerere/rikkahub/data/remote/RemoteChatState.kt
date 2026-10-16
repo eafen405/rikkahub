@@ -39,6 +39,20 @@ data class ChatConsumptionBatch(
     val throughSeq: Long,
     val initialization: Boolean,
 )
+/** Transient details for one open task; retained output is not a durable log. */
+data class RemoteTaskDetail(
+    val taskId: String,
+    val chunks: List<RemoteJobChunk> = emptyList(),
+    val next: Long = 0,
+    val earliest: Long = 0,
+    val total: Long = 0,
+    val availability: Int = 1,
+    val status: Int = 0,
+    val hasGap: Boolean = false,
+    val loading: Boolean = true,
+    val stopRequested: Boolean = false,
+    val failure: String? = null,
+)
 data class RemoteChatSnapshot(
     val sessionId: String? = null,
     val projection: RemoteChatProjection? = null,
@@ -56,6 +70,7 @@ data class RemoteChatSnapshot(
     val attachments: List<RemoteAttachmentDraft> = emptyList(),
     val downloading: Boolean = false,
     val attachmentNotice: String? = null,
+    val taskDetail: RemoteTaskDetail? = null,
 )
 enum class RemoteMessageFormat { PLAIN, MARKDOWN }
 fun remoteMessageFormat(message: RemoteChatMessage) =
@@ -70,6 +85,7 @@ class RemoteChatState(
     private val endpoint: String,
     private val retryDelayMillis: Long = 1_000,
     private val attachmentsBackend: RemoteAttachmentBackend? = null,
+    private val jobsBackend: RemoteJobBackend? = null,
 ) {
     private val mutable = MutableStateFlow(RemoteChatSnapshot())
     val snapshot: StateFlow<RemoteChatSnapshot> = mutable.asStateFlow()
@@ -89,6 +105,8 @@ class RemoteChatState(
     private val draftFiles = mutableMapOf<String, File>()
     private val uploads = mutableMapOf<String, Job>()
     private var download: Job? = null
+    private var taskObserver: Job? = null
+    private var taskEpoch = 0L
 
     fun bind(credential: String?, selectedSessionId: String?, userShortId: Int?) {
         val selected = if (selectedSessionId != null && userShortId != null) {
@@ -109,6 +127,7 @@ class RemoteChatState(
                 downloading = false, attachmentNotice = null,
             )
         }
+        closeTaskOutput()
         token = credential
         key = selected
         epoch++
@@ -179,6 +198,7 @@ class RemoteChatState(
 
     /** Releases observation only; never stops the backend Agent. */
     fun detach() {
+        closeTaskOutput()
         epoch++
         connection++
         observer?.cancel()
@@ -475,6 +495,101 @@ class RemoteChatState(
             catch (failure: Exception) { if (started == epoch) mutable.value = mutable.value.copy(failure = failure.description()) }
         }
     }
+    /** Opening or closing this view owns a polling lease, never the remote process. */
+    fun observeTaskOutput(taskId: String) {
+        val backend = jobsBackend ?: return
+        val credential = token ?: return
+        val selected = key ?: return
+        val task = mutable.value.projection?.tasks?.find { it.taskId == taskId } ?: return
+        closeTaskOutput()
+        val opened = taskEpoch
+        fun currentTask() = opened == taskEpoch && selected == key && credential == token
+        mutable.value = mutable.value.copy(taskDetail = RemoteTaskDetail(
+            taskId, status = task.status, availability = task.availability,
+            earliest = task.output.earliest, total = task.output.total,
+        ))
+        taskObserver = scope.launch {
+            while (currentTask()) {
+                try {
+                    val previous = mutable.value.taskDetail ?: return@launch
+                    val output = backend.output(credential, selected.sessionId, taskId, previous.next)
+                    if (!currentTask()) return@launch
+                    require(output.taskId == taskId) { "输出不属于当前任务" }
+                    val next = mergeTaskOutput(previous, output)
+                    mutable.value = mutable.value.copy(taskDetail = next)
+                    if (next.availability == 0 || (next.status >= 3 && next.next >= next.total)) return@launch
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) {
+                    if (!currentTask()) return@launch
+                    mutable.value = mutable.value.copy(taskDetail = mutable.value.taskDetail?.copy(loading = false, failure = failure.description()))
+                }
+                delay(retryDelayMillis)
+            }
+        }
+    }
+
+    fun closeTaskOutput() {
+        taskEpoch++
+        taskObserver?.cancel()
+        taskObserver = null
+        mutable.value = mutable.value.copy(taskDetail = null)
+    }
+
+    /** Separate command from stop(): stopping a reply never cancels a background task. */
+    fun stopTask(taskId: String) {
+        val backend = jobsBackend ?: return
+        val credential = token ?: return
+        val selected = key ?: return
+        val opened = taskEpoch
+        scope.launch {
+            try {
+                val outcome = backend.stop(credential, selected.sessionId, taskId)
+                if (opened != taskEpoch || selected != key || credential != token) return@launch
+                val detail = mutable.value.taskDetail?.takeIf { it.taskId == taskId } ?: return@launch
+                mutable.value = mutable.value.copy(taskDetail = detail.copy(
+                    stopRequested = outcome == 1,
+                    availability = if (outcome == 0) 0 else detail.availability,
+                ))
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) {
+                if (opened == taskEpoch && selected == key && credential == token) {
+                    mutable.value = mutable.value.copy(taskDetail = mutable.value.taskDetail?.copy(failure = failure.description()))
+                }
+            }
+        }
+    }
+
+    private fun mergeTaskOutput(previous: RemoteTaskDetail, output: RemoteJobOutput): RemoteTaskDetail {
+        if (output.availability == 0) return previous.copy(
+            availability = 0, loading = false, status = output.status,
+            earliest = output.earliest, total = output.total, failure = null,
+        )
+        var cursor = previous.next
+        var gap = previous.hasGap || output.lossy || output.earliest > cursor
+        // Follow the server retention window so a long-open view stays bounded too.
+        val chunks = previous.chunks.mapNotNull { chunk ->
+            val bytes = chunk.text.toByteArray(Charsets.UTF_8)
+            val trim = (output.earliest - chunk.at).coerceAtLeast(0)
+            if (trim >= bytes.size) null
+            else chunk.copy(at = chunk.at + trim, text = bytes.copyOfRange(trim.toInt(), bytes.size).toString(Charsets.UTF_8))
+        }.toMutableList()
+        output.chunks.forEach { chunk ->
+            val bytes = chunk.text.toByteArray(Charsets.UTF_8)
+            val end = chunk.at + bytes.size
+            if (end > cursor) {
+                gap = gap || chunk.gapBefore || chunk.at > cursor
+                val overlap = (cursor - chunk.at).coerceAtLeast(0).toInt()
+                chunks += chunk.copy(at = chunk.at + overlap, text = bytes.copyOfRange(overlap, bytes.size).toString(Charsets.UTF_8))
+                cursor = end
+            }
+        }
+        return previous.copy(
+            chunks = chunks, next = maxOf(cursor, output.next), earliest = output.earliest,
+            total = output.total, availability = output.availability, status = output.status,
+            hasGap = gap || output.earliest > 0 || output.next > cursor, loading = false, failure = null,
+        )
+    }
+
     private suspend fun load(selected: ChatSyncKey): ChatSyncRecord = recordLock.withLock {
         records[selected] ?: store.load(selected).also { records[selected] = it }
     }

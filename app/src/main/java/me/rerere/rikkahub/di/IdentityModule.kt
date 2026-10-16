@@ -8,6 +8,8 @@ import me.rerere.rikkahub.data.remote.RemoteAttachmentApi
 import me.rerere.rikkahub.data.remote.RemoteAttachmentBackend
 import me.rerere.rikkahub.data.remote.RemoteChatApi
 import me.rerere.rikkahub.data.remote.RemoteChatBackend
+import me.rerere.rikkahub.data.remote.RemoteJobApi
+import me.rerere.rikkahub.data.remote.RemoteJobBackend
 import me.rerere.rikkahub.data.remote.RemoteChatState
 import me.rerere.rikkahub.BuildConfig
 import me.rerere.rikkahub.data.remote.AndroidChatSyncStore
@@ -52,12 +54,14 @@ val identityModule = module {
 
     single<RemoteAttachmentBackend> { RemoteAttachmentApi(identityEndpoint, get<OkHttpClient>()) }
 
+    single<RemoteJobBackend> { RemoteJobApi(identityEndpoint, get<OkHttpClient>()) }
+
     single<ChatSyncStore> { AndroidChatSyncStore(get<Context>()) }
 
     single {
         RemoteChatState(
             get<RemoteChatBackend>(), CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
-            get<ChatSyncStore>(), identityEndpoint, attachmentsBackend = get<RemoteAttachmentBackend>(),
+            get<ChatSyncStore>(), identityEndpoint, attachmentsBackend = get<RemoteAttachmentBackend>(), jobsBackend = get<RemoteJobBackend>(),
         )
     }
 
