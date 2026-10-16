@@ -13,6 +13,9 @@ data class ChatSyncRecord(
     val consumedThrough: Long = -1,
     val initialized: Boolean = false,
     val pending: StoredChatSend? = null,
+    /** Null establishes a notification baseline; separate from sync and read positions. */
+    val notificationThrough: Long? = null,
+    val notificationEpisodeId: String? = null,
 )
 
 interface ChatSyncStore {
