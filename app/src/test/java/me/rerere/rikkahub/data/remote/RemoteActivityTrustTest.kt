@@ -37,6 +37,14 @@ class RemoteActivityTrustTest {
             alerts += key to preview
         }
     }
+    /** The account's one session, so reception binds it and owns when the reminder appears. */
+    private class Sessions : SessionBackend {
+        override suspend fun list(token: String) = OwnedSessions(listOf(OwnedSession("s", primary = true)), "s")
+        override suspend fun read(token: String, sessionId: String) = OwnedSession(sessionId)
+        override suspend fun select(token: String, sessionId: String) = read(token, sessionId)
+        override suspend fun create(token: String) = error("not used")
+        override suspend fun primary(token: String) = OwnedSession("s", primary = true)
+    }
     private class Backend : RemoteChatBackend {
         val updates = MutableSharedFlow<RemoteChatProjection>(extraBufferCapacity = 10)
         var acknowledged = 100L
@@ -55,16 +63,23 @@ class RemoteActivityTrustTest {
         override suspend fun stop(token: String, sessionId: String) = error("receiver never stops backend work")
     }
 
-    private fun bind(state: RemoteChatState) {
-        state.bind("alice", "s", 1)
+    private fun kotlinx.coroutines.test.TestScope.bind(
+        store: ChatSyncStore,
+        backend: RemoteChatBackend,
+        platform: RemoteNotificationPlatform,
+    ): RemoteChatState {
+        val receiver = RemoteReceiveState(Sessions(), backgroundScope, { settle ->
+            RemoteChatState(backend, backgroundScope, store, "https://fairy", notifies = settle)
+        }, platform)
+        receiver.bind("alice", 1); runCurrent()
+        return requireNotNull(receiver.stateForSession("s"))
     }
 
     @Test fun `a reminder reports the activity the panel already presents`() = runTest {
         val store = Store()
         val platform = Platform()
         val backend = Backend()
-        val state = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        bind(state); runCurrent()
+        val state = bind(store, backend, platform)
         var presented: RemoteActivity? = null
         platform.before = { presented = state.snapshot.value.activity }
         backend.updates.emit(delivery(1)); runCurrent()
@@ -77,8 +92,7 @@ class RemoteActivityTrustTest {
         val store = Store()
         val platform = Platform()
         val backend = Backend().apply { checkpointGate = CompletableDeferred() }
-        val state = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        bind(state); runCurrent()
+        val state = bind(store, backend, platform)
         backend.updates.emit(delivery(1)); runCurrent()
         // Waiting for the writer barrier: the panel cannot state the activity and nothing is settled.
         assertEquals(0, state.snapshot.value.activity.status)
@@ -96,8 +110,7 @@ class RemoteActivityTrustTest {
         val platform = Platform()
         // The writer has only acknowledged seq 0 while the reported run claims coverage through 1.
         val backend = Backend().apply { acknowledged = 0 }
-        val state = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        bind(state); runCurrent()
+        val state = bind(store, backend, platform)
         backend.updates.emit(delivery(1)); runCurrent()
         assertEquals(0, state.snapshot.value.activity.status)
         assertTrue(platform.alerts.isEmpty())
@@ -108,8 +121,7 @@ class RemoteActivityTrustTest {
         val store = Store()
         val platform = Platform()
         val backend = Backend()
-        val state = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        bind(state); runCurrent()
+        val state = bind(store, backend, platform)
         val gate = CompletableDeferred<Unit>()
         store.saveGate = gate
         backend.updates.emit(delivery(1)); runCurrent()

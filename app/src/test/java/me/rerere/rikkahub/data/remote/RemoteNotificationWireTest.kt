@@ -57,10 +57,22 @@ class RemoteNotificationWireTest {
         }
         server.executor = java.util.concurrent.Executors.newCachedThreadPool()
         server.start()
-        val state = RemoteChatState(RemoteChatApi(endpoint, OkHttpClient()), backgroundScope, store, endpoint, notifications = platform)
+        // The shipped client and synchronization owner, under the module that owns publication.
+        val receiver = RemoteReceiveState(object : SessionBackend {
+            override suspend fun list(token: String) = OwnedSessions(listOf(OwnedSession(sessionId, primary = true)), sessionId)
+            override suspend fun read(token: String, sessionId: String) = OwnedSession(sessionId)
+            override suspend fun select(token: String, sessionId: String) = read(token, sessionId)
+            override suspend fun create(token: String) = error("not used")
+            override suspend fun primary(token: String) = OwnedSession(sessionId, primary = true)
+        }, backgroundScope, { settle ->
+            RemoteChatState(RemoteChatApi(endpoint, OkHttpClient()), backgroundScope, store, endpoint, notifies = settle)
+        }, platform)
+        val state: RemoteChatState
         try {
-            state.bind("fixture-recipient", sessionId, 3)
+            receiver.bind("fixture-recipient", 3)
             withContext(Dispatchers.IO) { published.await() }
+            state = requireNotNull(receiver.stateForSession(sessionId))
+            assertEquals(1, alerts.size)
             assertEquals(listOf(key to "T15 actual durable delivery fixture."), alerts)
             assertEquals(1, state.snapshot.value.activity.status)
             assertEquals("ourfairy-user-3-primary/1", stored.notificationEpisodeId)
@@ -68,7 +80,7 @@ class RemoteNotificationWireTest {
             runCurrent()
             assertEquals(1, alerts.size)
         } finally {
-            state.detach()
+            receiver.bind(null, null)
             release.countDown()
             server.stop(0)
             (server.executor as java.util.concurrent.ExecutorService).shutdownNow()

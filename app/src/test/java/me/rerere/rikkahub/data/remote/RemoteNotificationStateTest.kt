@@ -6,6 +6,7 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -13,6 +14,11 @@ import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.*
 import org.junit.Test
 
+/**
+ * A session only records the episode it owes the reminder; reception sees every session and
+ * publishes the backlog once. These tests therefore drive the session through reception, because
+ * that module owns when a reminder appears.
+ */
 @OptIn(ExperimentalCoroutinesApi::class)
 class RemoteNotificationStateTest {
     private class Store : ChatSyncStore {
@@ -60,18 +66,55 @@ class RemoteNotificationStateTest {
         override suspend fun receipt(token: String, sessionId: String, requestId: String): ChatReceipt? = null
         override suspend fun stop(token: String, sessionId: String) = error("receiver never stops backend work")
     }
+
+    /** The account's session list: reception binds these sessions, the test does not. */
+    private class Sessions(
+        private val ids: Map<String, String> = mapOf("alice" to "s", "bob" to "bob-session"),
+    ) : SessionBackend {
+        override suspend fun list(token: String) = OwnedSessions(
+            listOf(OwnedSession(ids.getValue(token), primary = true)), ids.getValue(token),
+        )
+        override suspend fun read(token: String, sessionId: String) = OwnedSession(sessionId)
+        override suspend fun select(token: String, sessionId: String) = read(token, sessionId)
+        override suspend fun create(token: String) = error("not used")
+        override suspend fun primary(token: String) = OwnedSession(ids.getValue(token), primary = true)
+    }
+
+    private fun TestScope.received(
+        store: ChatSyncStore,
+        backend: RemoteChatBackend,
+        platform: Platform,
+        enabled: () -> Boolean = { true },
+    ) = RemoteReceiveState(Sessions(), backgroundScope, { settle ->
+        RemoteChatState(backend, backgroundScope, store, "https://fairy", notifies = settle)
+    }, platform, enabled)
+
+    private fun TestScope.opened(
+        store: ChatSyncStore,
+        backend: RemoteChatBackend,
+        platform: Platform,
+        enabled: () -> Boolean = { true },
+        user: String = "alice",
+        userShortId: Int = 1,
+        sessionId: String = "s",
+    ): RemoteChatState {
+        val receiver = received(store, backend, platform, enabled)
+        receiver.bind(user, userShortId); runCurrent()
+        return requireNotNull(receiver.stateForSession(sessionId))
+    }
+
     @Test fun `background delivery is consumed once before platform publication`() = runTest {
         val store = Store()
         val key = ChatSyncKey("https://fairy", 1, "s")
         store.records[key] = ChatSyncRecord(0, true, notificationThrough = 0)
         val platform = Platform()
         val backend = Backend()
-        val state = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        state.bind("alice", "s", 1); runCurrent()
+        val state = opened(store, backend, platform)
         backend.updates.emit(delivery(1)); runCurrent()
         assertEquals(listOf(key to "delivered1"), platform.alerts)
         assertEquals(1L, store.records[key]?.notificationThrough)
         assertEquals("s/1", store.records[key]?.notificationEpisodeId)
+        assertFalse(store.records.getValue(key).notificationOwed)
         state.retrySync(); runCurrent()
         assertEquals(1, platform.alerts.size)
     }
@@ -82,20 +125,20 @@ class RemoteNotificationStateTest {
         // This old valid sync record predates notifications; it is not a notification watermark.
         store.records[first] = Json.decodeFromString<ChatSyncRecord>("""{"consumedThrough":3,"initialized":true}""")
         val backend = Backend()
-        val state = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        state.bind("alice", "s", 1); runCurrent()
+        val state = opened(store, backend, platform)
         backend.updates.emit(delivery(5)); runCurrent()
         assertTrue(platform.alerts.isEmpty())
         assertEquals(5L, store.records[first]?.notificationThrough)
         backend.updates.emit(delivery(7, 2).copy(throughSeq = 5)); runCurrent()
         assertEquals(listOf(first to "delivered7"), platform.alerts)
+        // unreadable/missing local consumption restores the same empty record.
         state.detach()
-        store.records.clear() // unreadable/missing local consumption restores the same empty record.
-        val reset = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        reset.bind("alice", "s", 1); runCurrent()
+        store.records.clear()
+        val reset = opened(store, backend, platform)
         backend.updates.emit(delivery(9)); runCurrent()
         assertEquals(1, platform.alerts.size)
         assertEquals(9L, store.records[first]?.notificationThrough)
+        assertNotNull(reset)
     }
     @Test fun `active delivery and its final completion share one reminder while the next episode can alert`() = runTest {
         val store = Store()
@@ -103,8 +146,7 @@ class RemoteNotificationStateTest {
         store.records[key] = ChatSyncRecord(0, true, notificationThrough = 0)
         val platform = Platform()
         val backend = Backend()
-        val state = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        state.bind("alice", "s", 1); runCurrent()
+        opened(store, backend, platform)
         backend.updates.emit(delivery(2).copy(activity = RemoteActivity(2, listOf(2, 4), "s/1", 1, 2,
             delivery = RemoteActivityDelivery("s/1", 2)))); runCurrent()
         assertEquals(1, platform.alerts.size)
@@ -121,8 +163,7 @@ class RemoteNotificationStateTest {
         store.records[key] = ChatSyncRecord(0, true, notificationThrough = 0)
         val platform = Platform()
         val backend = Backend().apply { pageGate = CompletableDeferred(); checkpointGate = CompletableDeferred() }
-        val state = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        state.bind("alice", "s", 1); runCurrent()
+        val state = opened(store, backend, platform)
         backend.updates.emit(delivery(8).copy(fromSeq = 6, events = (6L..8).map(::event))); runCurrent()
         assertTrue(platform.alerts.isEmpty())
         backend.updates.emit(delivery(10, 2).copy(throughSeq = 8, fromSeq = 6, events = (6L..10).map(::event),
@@ -143,8 +184,7 @@ class RemoteNotificationStateTest {
         store.records[key] = ChatSyncRecord(0, true, notificationThrough = 0)
         val platform = Platform()
         val backend = Backend()
-        val state = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        state.bind("alice", "s", 1); runCurrent()
+        val state = opened(store, backend, platform)
         val gate = CompletableDeferred<Unit>(); store.saveGate = gate
         backend.updates.emit(delivery(1)); runCurrent()
         platform.foreground = true // e.g. account/settings page became visible during disk work.
@@ -163,8 +203,7 @@ class RemoteNotificationStateTest {
         store.records[key] = ChatSyncRecord(0, true, notificationThrough = 0)
         var enabled = false
         val platform = Platform(); val backend = Backend()
-        val state = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform, notificationsEnabled = { enabled })
-        state.bind("alice", "s", 1); runCurrent()
+        val state = opened(store, backend, platform, enabled = { enabled })
         backend.updates.emit(delivery(1)); runCurrent()
         enabled = true
         state.retrySync(); runCurrent()
@@ -177,16 +216,14 @@ class RemoteNotificationStateTest {
         val key = ChatSyncKey("https://fairy", 1, "s")
         store.records[key] = ChatSyncRecord(0, true, notificationThrough = 0)
         val platform = Platform(); val backend = Backend()
-        val state = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        state.bind("alice", "s", 1); runCurrent()
+        val state = opened(store, backend, platform)
         store.failSave = true
         backend.updates.emit(delivery(1)); runCurrent()
         assertTrue(platform.alerts.isEmpty())
         assertEquals(0L, store.records[key]?.notificationThrough)
         state.detach(); store.failSave = false
-        val restarted = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
+        opened(store, backend, platform)
         platform.before = { assertEquals(1L, store.records[key]?.notificationThrough) }
-        restarted.bind("alice", "s", 1); runCurrent()
         backend.updates.emit(delivery(1)); runCurrent()
         assertEquals(1, platform.alerts.size)
     }
@@ -195,43 +232,40 @@ class RemoteNotificationStateTest {
         val key = ChatSyncKey("https://fairy", 1, "s")
         store.records[key] = ChatSyncRecord(0, true, notificationThrough = 0)
         val platform = Platform().apply { crashBefore = true }; val backend = Backend()
-        val state = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        state.bind("alice", "s", 1); runCurrent()
+        val state = opened(store, backend, platform)
         backend.updates.emit(delivery(1)); runCurrent()
         assertTrue(platform.alerts.isEmpty())
         assertEquals(1L, store.records[key]?.notificationThrough)
         assertEquals("delivered1", state.snapshot.value.projection?.messages?.single()?.text)
         state.detach(); platform.crashBefore = false
-        val restarted = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        restarted.bind("alice", "s", 1); runCurrent()
+        val restarted = opened(store, backend, platform)
         backend.updates.emit(delivery(1)); runCurrent()
         assertTrue(platform.alerts.isEmpty())
         backend.updates.emit(delivery(2, 2).copy(throughSeq = 1)); runCurrent()
         assertEquals(1, platform.alerts.size)
+        assertNotNull(restarted)
     }
     @Test fun `crash after notify cannot repeat that episode on restart`() = runTest {
         val store = Store()
         val key = ChatSyncKey("https://fairy", 1, "s")
         store.records[key] = ChatSyncRecord(0, true, notificationThrough = 0)
         val platform = Platform().apply { crashAfter = true }; val backend = Backend()
-        val state = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        state.bind("alice", "s", 1); runCurrent()
+        val state = opened(store, backend, platform)
         backend.updates.emit(delivery(1)); runCurrent()
         assertEquals(1, platform.alerts.size)
         state.detach(); platform.crashAfter = false
-        val restarted = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        restarted.bind("alice", "s", 1); runCurrent()
+        val restarted = opened(store, backend, platform)
         backend.updates.emit(delivery(1)); runCurrent()
         assertEquals(1, platform.alerts.size)
         assertEquals(1L, store.records[key]?.notificationThrough)
+        assertNotNull(restarted)
     }
     @Test fun `an account retired during consumption commit cannot publish its late notification`() = runTest {
         val store = Store()
         val alice = ChatSyncKey("https://fairy", 1, "s")
         store.records[alice] = ChatSyncRecord(0, true, notificationThrough = 0)
         val platform = Platform(); val backend = Backend()
-        val state = RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        state.bind("alice", "s", 1); runCurrent()
+        val state = opened(store, backend, platform)
         val gate = CompletableDeferred<Unit>(); store.saveGate = gate
         backend.updates.emit(delivery(1)); runCurrent()
         state.bind("bob", "bob-session", 2); runCurrent()

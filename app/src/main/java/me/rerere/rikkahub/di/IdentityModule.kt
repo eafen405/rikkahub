@@ -74,14 +74,14 @@ val identityModule = module {
         val syncStore = get<ChatSyncStore>()
         val files = get<RemoteAttachmentBackend>()
         val jobs = get<RemoteJobBackend>()
-        RemoteReceiveState(get<SessionBackend>(), runtimeScope) {
+        RemoteReceiveState(get<SessionBackend>(), runtimeScope, { settleReminders ->
             RemoteChatState(
                 chatBackend, runtimeScope, syncStore, identityEndpoint,
                 attachmentsBackend = files, jobsBackend = jobs,
                 speechBackend = get<RemoteSpeechBackend>(),
-                notifications = notifications, notificationsEnabled = { notifications.enabled.value },
+                notifies = settleReminders,
             )
-        }
+        }, notifications, { notifications.enabled.value })
     }
 
     single { RemoteReceiveServiceLauncher(get<Context>()) }
