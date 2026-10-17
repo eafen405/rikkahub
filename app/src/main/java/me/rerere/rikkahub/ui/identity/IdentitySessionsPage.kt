@@ -49,7 +49,8 @@ fun IdentitySessionsPage(
 ) {
     val identity by session.identity.collectAsStateWithLifecycle()
     val token = identity?.token
-    val snapshot by state.sessions.collectAsStateWithLifecycle()
+    val owned = state.owned
+    val snapshot by owned.snapshot.collectAsStateWithLifecycle()
     val chat by state.selectedChat.collectAsStateWithLifecycle()
 
     Scaffold { innerPadding ->
@@ -92,13 +93,13 @@ fun IdentitySessionsPage(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 OutlinedButton(
-                    onClick = { state.refresh() },
+                    onClick = { owned.refresh() },
                     enabled = token != null && !snapshot.loading,
                 ) {
                     Text(stringResource(R.string.sessions_refresh_action))
                 }
                 Button(
-                    onClick = { state.create() },
+                    onClick = { owned.create() },
                     enabled = token != null && !snapshot.loading,
                 ) {
                     Text(stringResource(R.string.sessions_create_action))
@@ -144,8 +145,8 @@ fun IdentitySessionsPage(
                 )
             }
 
-            snapshot.sessions.forEach { owned ->
-                val isSelected = owned.id == snapshot.selectedId
+            snapshot.sessions.forEach { session ->
+                val isSelected = session.id == snapshot.selectedId
                 Spacer(Modifier.height(8.dp))
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
@@ -154,11 +155,11 @@ fun IdentitySessionsPage(
                             style = MaterialTheme.typography.titleSmall,
                         )
                         Text(
-                            text = owned.id,
+                            text = session.id,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                        if (owned.primary) {
+                        if (session.primary) {
                             Text(
                                 text = stringResource(R.string.sessions_row_primary),
                                 style = MaterialTheme.typography.labelMedium,
@@ -167,7 +168,7 @@ fun IdentitySessionsPage(
                         }
                         Spacer(Modifier.height(12.dp))
                         FilledTonalButton(
-                            onClick = { state.select(owned.id) },
+                            onClick = { owned.select(session.id) },
                             enabled = !snapshot.loading && !isSelected,
                         ) {
                             Text(stringResource(R.string.sessions_select_action))
@@ -178,7 +179,7 @@ fun IdentitySessionsPage(
 
             Spacer(Modifier.height(24.dp))
             OutlinedButton(
-                onClick = { state.returnToPrimary() },
+                onClick = { owned.returnToPrimary() },
                 enabled = token != null && !snapshot.loading,
                 modifier = Modifier.fillMaxWidth(),
             ) {

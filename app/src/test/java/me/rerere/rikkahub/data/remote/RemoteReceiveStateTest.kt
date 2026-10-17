@@ -57,7 +57,7 @@ class RemoteReceiveStateTest {
         val main = state.stateForSession("alice-main")
         val other = state.stateForSession("alice-other")
         assertSame(main, state.selectedChat.value)
-        state.select("alice-other"); runCurrent()
+        state.owned.select("alice-other"); runCurrent()
         assertSame(other, state.selectedChat.value)
         assertEquals(2, backend.opens.size)
         state.stopObservation(); runCurrent()
@@ -66,6 +66,27 @@ class RemoteReceiveStateTest {
         assertSame(other, state.selectedChat.value)
         assertEquals(4, backend.opens.size)
     }
+
+    @Test fun `the page drives the very session state reception binds and observes`() = runTest {
+        val backend = Chats()
+        val state = RemoteReceiveState(Sessions(), backgroundScope, { RemoteChatState(backend, backgroundScope, Store(), "https://fairy") })
+        state.bind("alice", 1); runCurrent()
+
+        // The page acts on the state it renders. Reception observes that same instance, so a
+        // session the page starts or chooses is the one whose chat reception hands over — there
+        // is no receiver copy for the two to disagree about.
+        state.owned.select("alice-other"); runCurrent()
+        assertEquals("alice-other", state.owned.snapshot.value.selectedId)
+        assertSame(state.stateForSession("alice-other"), state.selectedChat.value)
+
+        state.owned.create(); runCurrent()
+        assertEquals("alice-created", state.owned.snapshot.value.selectedId)
+        assertSame(state.stateForSession("alice-created"), state.selectedChat.value)
+
+        state.owned.returnToPrimary(); runCurrent()
+        assertEquals("alice-main", state.owned.snapshot.value.selectedId)
+        assertSame(state.stateForSession("alice-main"), state.selectedChat.value)
+    }
     @Test fun `switching accounts retires old observers and ignores late list results`() = runTest {
         val sessions = Sessions().apply { gate = CompletableDeferred() }
         val backend = Chats()
@@ -73,12 +94,12 @@ class RemoteReceiveStateTest {
         state.bind("alice", 1); runCurrent()
         state.bind("bob", 2); runCurrent()
         sessions.gate!!.complete(Unit); runCurrent()
-        assertEquals(listOf("bob-main", "bob-other"), state.sessions.value.sessions.map { it.id })
+        assertEquals(listOf("bob-main", "bob-other"), state.owned.snapshot.value.sessions.map { it.id })
         assertNull(state.stateForSession("alice-main"))
         assertTrue(backend.opens.all { it.first == "bob" })
         state.bind(null, null); runCurrent()
         assertNull(state.selectedChat.value)
-        assertTrue(state.sessions.value.sessions.isEmpty())
+        assertTrue(state.owned.snapshot.value.sessions.isEmpty())
     }
     @Test fun `the published snapshot is the account's own state, not a receiver copy`() = runTest {
         val sessions = Sessions().apply { gate = CompletableDeferred() }
@@ -87,9 +108,9 @@ class RemoteReceiveStateTest {
         // The refresh starts inside bind: the page's snapshot must already be the one the
         // account is asking for, not a copy that arrives on the next dispatch.
         state.bind("alice", 1)
-        assertTrue(state.sessions.value.loading)
+        assertTrue(state.owned.snapshot.value.loading)
         sessions.gate!!.complete(Unit); runCurrent()
-        assertEquals(listOf("alice-main", "alice-other"), state.sessions.value.sessions.map { it.id })
+        assertEquals(listOf("alice-main", "alice-other"), state.owned.snapshot.value.sessions.map { it.id })
     }
 
     @Test fun `notification waits for initial list and authenticates target before selecting it`() = runTest {
@@ -101,10 +122,10 @@ class RemoteReceiveStateTest {
         assertFalse(open.isCompleted)
         sessions.gate!!.complete(Unit); runCurrent()
         assertTrue(open.await())
-        assertEquals("alice-other", state.sessions.value.selectedId)
+        assertEquals("alice-other", state.owned.snapshot.value.selectedId)
         assertSame(state.stateForSession("alice-other"), state.selectedChat.value)
         assertFalse(state.openNotification("bob-private"))
-        assertEquals("alice-other", state.sessions.value.selectedId)
+        assertEquals("alice-other", state.owned.snapshot.value.selectedId)
         assertEquals(listOf("alice" to "alice-other", "alice" to "bob-private"), sessions.authorized)
     }    @Test fun `one sessions long task does not block another sessions notification and each uses its own position`() = runTest {
         val store = Store()
