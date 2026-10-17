@@ -1,47 +1,45 @@
 package me.rerere.rikkahub.service
 
-import android.content.Context
-import android.content.Intent
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
-import androidx.lifecycle.ProcessLifecycleOwner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import me.rerere.rikkahub.data.remote.AccountSession
+import me.rerere.rikkahub.data.remote.RemoteReceivePlatform
 import me.rerere.rikkahub.data.remote.RemoteReceiveState
 
 data class RemoteReceiveServiceStatus(val running: Boolean = false, val message: String = "后台接收未开启")
 
 /** App/account ownership, independent of whichever Compose page is visible. */
 class RemoteReceiveController(
-    private val context: Context,
     private val account: AccountSession,
     private val receiver: RemoteReceiveState,
-    private val notifications: AndroidRemoteNotifications,
+    private val platform: RemoteReceivePlatform,
+    private val service: RemoteReceiveServiceHost,
+    lifecycle: Lifecycle,
     scope: CoroutineScope,
 ) {
     private val mutableStatus = MutableStateFlow(RemoteReceiveServiceStatus())
     val status = mutableStatus.asStateFlow()
-    private var foreground = notifications.isForeground()
     private var starting = false
 
     init {
-        ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
+        lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStart(owner: LifecycleOwner) {
-                foreground = true
-                if (notifications.enabled.value && account.isSignedIn) requestService()
+                if (platform.enabled.value && account.isSignedIn) requestService()
                 reconcile()
             }
-            override fun onStop(owner: LifecycleOwner) { foreground = false; reconcile() }
+
+            override fun onStop(owner: LifecycleOwner) = reconcile()
         })
         scope.launch {
             account.identity.collect { identity ->
                 receiver.bind(identity?.token, identity?.user?.shortId)
                 if (identity == null) stopService()
-                else if (notifications.enabled.value && foreground) requestService()
+                else if (platform.enabled.value && platform.isForeground()) requestService()
                 reconcile()
             }
         }
@@ -56,7 +54,7 @@ class RemoteReceiveController(
     }
 
     fun setEnabled(value: Boolean) {
-        try { notifications.setEnabled(value) }
+        try { platform.setEnabled(value) }
         catch (failure: Exception) { mutableStatus.value = mutableStatus.value.copy(message = failure.message ?: "设置保存失败"); return }
         if (value && account.isSignedIn) requestService() else stopService()
         reconcile()
@@ -66,13 +64,13 @@ class RemoteReceiveController(
         if (starting || mutableStatus.value.running) return
         starting = true
         mutableStatus.value = RemoteReceiveServiceStatus(message = "正在启动后台接收…")
-        try { ContextCompat.startForegroundService(context, Intent(context, RemoteReceiveService::class.java)) }
+        try { service.start() }
         catch (failure: RuntimeException) { serviceStopped("系统拒绝后台接收：${failure.message}") }
     }
 
     private fun stopService() {
-        context.stopService(Intent(context, RemoteReceiveService::class.java))
-        serviceStopped(if (notifications.enabled.value) "登录后可恢复后台接收" else "后台接收未开启")
+        service.stop()
+        serviceStopped(if (platform.enabled.value) "登录后可恢复后台接收" else "后台接收未开启")
     }
 
     fun serviceStarted() {
@@ -87,8 +85,9 @@ class RemoteReceiveController(
         reconcile()
     }
 
+    /** Ask the platform now, never a remembered answer: publication asks the same object. */
     private fun reconcile() {
-        if (account.isSignedIn && (foreground || mutableStatus.value.running)) receiver.resumeObservation()
+        if (account.isSignedIn && (platform.isForeground() || mutableStatus.value.running)) receiver.resumeObservation()
         else receiver.stopObservation()
     }
 }
