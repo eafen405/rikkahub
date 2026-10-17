@@ -37,7 +37,8 @@ class RemoteReceiveController(
         })
         scope.launch {
             account.identity.collect { identity ->
-                receiver.bind(identity?.token, identity?.user?.shortId)
+                // Reception itself is bound by the identity publisher in the turn it publishes the
+                // account; this collector owns the service/observation boundary only.
                 if (identity == null) stopService()
                 else if (platform.enabled.value && platform.isForeground()) requestService()
                 reconcile()
@@ -47,8 +48,6 @@ class RemoteReceiveController(
 
     suspend fun openNotification(sessionId: String): Boolean {
         val identity = account.identity.value ?: return false
-        // A cold click may arrive before the collector resumes after restore.
-        receiver.bind(identity.token, identity.user.shortId)
         val opened = receiver.openNotification(sessionId)
         return opened && account.identity.value == identity
     }

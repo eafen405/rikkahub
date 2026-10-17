@@ -13,6 +13,12 @@ import kotlinx.coroutines.launch
 /**
  * One account owns each session runtime. The page shares these instances with reception.
  *
+ * The list is not copied here: [sessions] is the very flow [OwnedSessionState] publishes, so
+ * there is no second copy that a collector could lag behind. Whose list it is is decided by
+ * [bind], which the identity publisher calls in the turn it publishes the account (see
+ * [bindIdentity]) — the previous account's list and chats are retired before a collector can
+ * observe the new identity.
+ *
  * Reception also owns the reminder: a session records the episode it owes in its own durable
  * record, and this module sees every session, so a backlog is published as one reminder rather
  * than one per session.
@@ -25,9 +31,13 @@ class RemoteReceiveState(
     private val notificationsEnabled: () -> Boolean = { true },
 ) {
     private val owned = OwnedSessionState(backend, scope)
-    private val mutableSessions = MutableStateFlow(SessionsSnapshot())
-    val sessions: StateFlow<SessionsSnapshot> = mutableSessions.asStateFlow()
+
+    /** The account's own snapshot; the page renders this flow and does not decide whose it is. */
+    val sessions: StateFlow<SessionsSnapshot> = owned.snapshot
+
     private val mutableSelected = MutableStateFlow<RemoteChatState?>(null)
+
+    /** The observable pointer to the selected runtime; [bind] retires it with the list. */
     val selectedChat: StateFlow<RemoteChatState?> = mutableSelected.asStateFlow()
     private val chats = mutableMapOf<String, RemoteChatState>()
     private var token: String? = null
@@ -49,12 +59,20 @@ class RemoteReceiveState(
                         chat.onSettled(::publishBacklog)
                     }
                 }
-                mutableSessions.value = listed
                 mutableSelected.value = chats[listed.selectedId]
                 if (removed.isNotEmpty()) publishBacklog()
             }
         }
     }
+
+    /**
+     * Take up the identity that was just published, or drop the previous one.
+     *
+     * The publisher calls this synchronously with the identity it carries (null on sign-out), so
+     * [OwnedSessionState.bind] has already retired every answer asked for under the previous
+     * credential before the new identity can be collected.
+     */
+    fun bindIdentity(identity: SignedIn?) = bind(identity?.token, identity?.user?.shortId)
 
     fun bind(token: String?, userShortId: Int?) {
         if (token == this.token && userShortId == this.userShortId) return
@@ -62,14 +80,11 @@ class RemoteReceiveState(
         chats.values.forEach { it.detach() }
         chats.clear()
         mutableSelected.value = null
-        mutableSessions.value = SessionsSnapshot()
         this.token = token
         this.userShortId = userShortId
         owned.bind(token)
         if (token != null && userShortId != null) owned.refresh()
     }
-
-    fun isBoundTo(token: String?, userShortId: Int?): Boolean = token == this.token && userShortId == this.userShortId
 
     fun stateForSession(sessionId: String): RemoteChatState? = chats[sessionId]
     fun refresh() = owned.refresh()
@@ -122,7 +137,7 @@ class RemoteReceiveState(
                 if (started != epoch || !notificationsEnabled() || platform.isForeground()) return@launch
                 // One reminder for the account's whole backlog. It opens the primary session when
                 // that one owes something, so a merge still lands where the user reads.
-                val primary = mutableSessions.value.primarySessionId
+                val primary = owned.snapshot.value.primarySessionId
                 val target = owed.minWithOrNull(compareBy({ it.key.sessionId != primary }, { it.key.sessionId }))
                     ?: return@launch
                 platform.publish(target.key, target.preview)

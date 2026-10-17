@@ -31,7 +31,15 @@ class StaleAccountAnswer : Exception("the account changed before this answer arr
 class AccountSession(
     private val backend: IdentityBackend,
     private val store: CredentialStore,
-    private val onAccountChanged: suspend () -> Unit = {},
+    /**
+     * Runs synchronously with the identity being published — null when it is withdrawn — while
+     * the account lock is still held and before any collector can observe the new value.
+     *
+     * Reception binds here: the app must never act as an account while the rest of it still
+     * holds the previous account's state. It must not suspend, for the same reason — a suspending
+     * observer would let collectors see the new identity first.
+     */
+    private val onAccountChanged: (SignedIn?) -> Unit = {},
 ) {
     private val mutex = Mutex()
     private var generation = 0L
@@ -78,8 +86,7 @@ class AccountSession(
         }
         return mutex.withLock {
             if (generation != attempt) return@withLock null
-            mutableIdentity.value = SignedIn(stored, restored)
-            onAccountChanged()
+            publish(SignedIn(stored, restored))
             restored
         }
     }
@@ -95,9 +102,8 @@ class AccountSession(
         val revoked = mutex.withLock {
             generation += 1
             val held = token
-            mutableIdentity.value = null
+            publish(null)
             store.clear()
-            onAccountChanged()
             held
         }
         if (revoked != null) {
@@ -114,8 +120,18 @@ class AccountSession(
     private suspend fun adopt(attempt: Long, signedIn: SignedIn): IdentityUser = mutex.withLock {
         if (generation != attempt) throw StaleAccountAnswer()
         store.save(signedIn.token)
-        mutableIdentity.value = signedIn
-        onAccountChanged()
+        publish(signedIn)
         signedIn.user
+    }
+
+    /**
+     * Make [signedIn] the account and tell its observers in the same turn.
+     *
+     * Nothing here suspends, so the value is published and every observer has run before a
+     * collector of [identity] can resume: the account it reads is already the installed one.
+     */
+    private fun publish(signedIn: SignedIn?) {
+        mutableIdentity.value = signedIn
+        onAccountChanged(signedIn)
     }
 }

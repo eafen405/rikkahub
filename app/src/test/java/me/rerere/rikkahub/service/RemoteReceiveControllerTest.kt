@@ -32,6 +32,7 @@ import me.rerere.rikkahub.data.remote.SessionBackend
 import me.rerere.rikkahub.data.remote.SignedIn
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -131,10 +132,11 @@ class RemoteReceiveControllerTest {
         val host = Host()
         val chats = Chats()
         val screens = Screen()
-        val account = AccountSession(Identity(), InMemoryCredentialStore())
-        private val receiver = RemoteReceiveState(Sessions(), scope, {
+        val receiver = RemoteReceiveState(Sessions(), scope, {
             RemoteChatState(chats, scope, Store(), "https://fairy")
         })
+        // The same wiring IdentityModule gives the app: the identity publisher binds reception.
+        val account = AccountSession(Identity(), InMemoryCredentialStore(), onAccountChanged = receiver::bindIdentity)
         val controller = RemoteReceiveController(account, receiver, platform, host, screens.lifecycle, scope)
     }
 
@@ -223,5 +225,49 @@ class RemoteReceiveControllerTest {
 
         assertFalse(harness.controller.status.value.running)
         assertEquals("系统拒绝后台接收：restricted", harness.controller.status.value.message)
+    }
+
+    /**
+     * The account is the only thing that decides whose list reception holds. An identity is
+     * published before any collector can observe it, so a page recomposing after sign-in must
+     * never be handed the previous account's sessions while a collector is still queued.
+     */
+    @Test
+    fun `an account change binds reception as it is published, before any collector runs`() = runTest {
+        val harness = Harness(backgroundScope, foreground = true, enabled = true)
+        runCurrent()
+        harness.account.signIn("alice", "pw")
+        runCurrent()
+        assertEquals(listOf("token-alice-main"), harness.receiver.sessions.value.sessions.map { it.id })
+
+        // No dispatcher turn between publication and this read: the app already acts as bob.
+        harness.account.signIn("bob", "pw")
+        assertEquals("token-bob", harness.account.token)
+        assertTrue(
+            "the previous account's list must not survive the new account's publication",
+            harness.receiver.sessions.value.sessions.isEmpty(),
+        )
+        assertNull(harness.receiver.stateForSession("token-alice-main"))
+
+        runCurrent()
+        assertEquals(listOf("token-bob-main"), harness.receiver.sessions.value.sessions.map { it.id })
+        assertEquals(listOf("token-bob" to "token-bob-main"), harness.chats.opened.drop(1))
+    }
+
+    /** Sign-out is published the same way, so the list is gone before the lock is released. */
+    @Test
+    fun `signing out retires the account's list in the same turn`() = runTest {
+        val harness = Harness(backgroundScope, foreground = true, enabled = true)
+        harness.account.signIn("alice", "pw")
+        runCurrent()
+        assertEquals(listOf("token-alice-main"), harness.receiver.sessions.value.sessions.map { it.id })
+
+        harness.account.signOut()
+        assertNull(harness.account.token)
+        assertTrue(
+            "a signed-out app must not keep showing the last account's list",
+            harness.receiver.sessions.value.sessions.isEmpty(),
+        )
+        assertNull(harness.receiver.selectedChat.value)
     }
 }

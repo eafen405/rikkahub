@@ -36,9 +36,10 @@ import androidx.compose.ui.res.stringResource
  * how to start another or walk back to your main one.
  *
  * This page reads the account from [AccountSession] and nothing else — it holds
- * no identity of its own. Keying the page state to that credential is what makes
- * a sign-out or a new sign-in empty this page immediately, rather than leaving
- * the last account's list on screen.
+ * no identity of its own. The list it renders is already the account's own:
+ * reception is bound by the identity publisher in the same turn the account is
+ * published, so a sign-out or a new sign-in has retired the previous list before
+ * this page can recompose. The page does not re-derive whose list it is.
  */
 @Composable
 fun IdentitySessionsPage(
@@ -48,12 +49,8 @@ fun IdentitySessionsPage(
 ) {
     val identity by session.identity.collectAsStateWithLifecycle()
     val token = identity?.token
-    val received by state.sessions.collectAsStateWithLifecycle()
-    val selectedChat by state.selectedChat.collectAsStateWithLifecycle()
-    // Account publication may precede the app receiver collector by one dispatch.
-    val matches = state.isBoundTo(token, identity?.user?.shortId)
-    val snapshot = if (matches) received else SessionsSnapshot()
-    val chat = selectedChat.takeIf { matches }
+    val snapshot by state.sessions.collectAsStateWithLifecycle()
+    val chat by state.selectedChat.collectAsStateWithLifecycle()
 
     Scaffold { innerPadding ->
         Column(

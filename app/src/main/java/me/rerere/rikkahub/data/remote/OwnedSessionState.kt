@@ -46,7 +46,8 @@ data class SessionsSnapshot(
  *
  * [snapshot] is the single authoritative view of this state and it is a
  * [StateFlow], so the page that renders it recomposes on its own; there is no
- * second copy and no polling.
+ * second copy and no polling. [RemoteReceiveState] republishes this very flow
+ * rather than copying it.
  *
  * There is no second identity here: [bind] takes the credential it is allowed
  * to act as, and it takes no identity of its own to disagree with
