@@ -21,13 +21,14 @@ import me.rerere.rikkahub.R
 import me.rerere.rikkahub.RouteActivity
 import me.rerere.rikkahub.data.remote.ChatSyncKey
 import me.rerere.rikkahub.data.remote.RemoteNotificationPlatform
+import me.rerere.rikkahub.data.remote.RemoteReceivePlatform
 import me.rerere.rikkahub.ui.identity.RemoteNotificationTarget
 
 /** Android publication only; eligibility and durable consumption belong to shared session sync. */
-class AndroidRemoteNotifications(private val context: Context) : RemoteNotificationPlatform {
+class AndroidRemoteNotifications(private val context: Context) : RemoteNotificationPlatform, RemoteReceivePlatform {
     private val preferences = context.getSharedPreferences("ourfairy.remote-receive", Context.MODE_PRIVATE)
     private val mutableEnabled = MutableStateFlow(preferences.getBoolean("enabled", false))
-    val enabled = mutableEnabled.asStateFlow()
+    override val enabled = mutableEnabled.asStateFlow()
     private val mutableFailure = MutableStateFlow<String?>(null)
     val failure = mutableFailure.asStateFlow()
 
@@ -37,7 +38,7 @@ class AndroidRemoteNotifications(private val context: Context) : RemoteNotificat
         manager.createNotificationChannel(NotificationChannel(RECEIVE_CHANNEL, "Fairy 后台接收", NotificationManager.IMPORTANCE_LOW))
     }
 
-    fun setEnabled(value: Boolean) {
+    override fun setEnabled(value: Boolean) {
         check(preferences.edit().putBoolean("enabled", value).commit()) { "无法保存后台接收设置" }
         mutableEnabled.value = value
     }

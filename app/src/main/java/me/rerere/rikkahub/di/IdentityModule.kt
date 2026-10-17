@@ -1,6 +1,7 @@
 package me.rerere.rikkahub.di
 
 import android.content.Context
+import androidx.lifecycle.ProcessLifecycleOwner
 import me.rerere.rikkahub.data.remote.RemoteAttachmentApi
 import me.rerere.rikkahub.data.remote.RemoteSpeechApi
 import me.rerere.rikkahub.data.remote.RemoteSpeechBackend
@@ -15,6 +16,7 @@ import me.rerere.rikkahub.BuildConfig
 import me.rerere.rikkahub.data.remote.RemoteReceiveState
 import me.rerere.rikkahub.service.AndroidRemoteNotifications
 import me.rerere.rikkahub.service.RemoteReceiveController
+import me.rerere.rikkahub.service.RemoteReceiveServiceLauncher
 import me.rerere.rikkahub.data.remote.AndroidChatSyncStore
 import me.rerere.rikkahub.data.remote.ChatSyncStore
 import me.rerere.rikkahub.data.remote.AccountSession
@@ -82,9 +84,14 @@ val identityModule = module {
         }
     }
 
+    single { RemoteReceiveServiceLauncher(get<Context>()) }
+
     single {
-        RemoteReceiveController(get<Context>(), get<AccountSession>(), get<RemoteReceiveState>(),
-            get<AndroidRemoteNotifications>(), get<AppScope>())
+        // The app-wide foreground fact is the notification boundary's own read; the
+        // process lifecycle only tells reception when to ask for it again.
+        RemoteReceiveController(get<AccountSession>(), get<RemoteReceiveState>(),
+            get<AndroidRemoteNotifications>(), get<RemoteReceiveServiceLauncher>(),
+            ProcessLifecycleOwner.get().lifecycle, get<AppScope>())
     }
 
     single {
