@@ -29,7 +29,7 @@ class RemoteActivityStateTest {
         suspend fun emit(session: String, value: RemoteActivity, version: Long = 1, generation: String = "g1") {
             streams.getValue(session).emit(RemoteChatProjection(session, generation = generation, version = version,
                 cursor = 0, durableThroughSeq = 0, throughSeq = 0, fromSeq = 0,
-                events = listOf(RemoteChatRecoveryTest.event(0)), activity = value))
+                events = listOf(remoteEvent(0)), activity = value))
         }
     }
     private fun active(reason: Int) = RemoteActivity(status = 2, reasons = listOf(reason), episodeId = "s/0", startedSeq = 0, throughSeq = 0)
