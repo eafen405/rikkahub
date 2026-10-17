@@ -96,6 +96,23 @@ data class ChatHistoryPage(
 )
 
 interface RemoteChatBackend {
+    /**
+     * One session's whole projection, read once.
+     *
+     * This is the client mirror of the documented `/chat/read` route: it names
+     * only the session, and the backend's default opening range answers with the
+     * same cumulative snapshot [observe] pushes, built by the same projection
+     * step. Reading and observing are two shapes of one answer, which is why a
+     * caller must not treat the values as independent facts.
+     *
+     * No page opens a session with it. Every place that shows a session needs
+     * the stream, and [observe]'s opening snapshot already carries everything a
+     * read would return, so opening with both would spend a second request on
+     * the same answer. It stays as the adapter for the one-shot case the route
+     * exists for — a diagnostic, or a cold-start cross-check, that wants the
+     * state once without holding a subscription open — rather than because
+     * anything calls it today.
+     */
     suspend fun read(token: String, sessionId: String): RemoteChatProjection
 
     /** [uploadIds] are completed uploads in the order the message shows them. */
@@ -155,6 +172,11 @@ class RemoteChatApi(
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) : RemoteChatBackend {
 
+    /**
+     * `/chat/read`: one POST naming only the session, so the backend's default
+     * opening range applies, answered with the projection in full rather than as
+     * a stream. See [RemoteChatBackend.read] for when this is the right call.
+     */
     override suspend fun read(token: String, sessionId: String): RemoteChatProjection =
         call("/chat/read", json.encodeToString(SessionRef(sessionId)), token)
             .projection
