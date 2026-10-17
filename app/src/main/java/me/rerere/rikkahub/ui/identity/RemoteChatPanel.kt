@@ -211,7 +211,7 @@ fun RemoteChatPanel(
             messages = projection?.messages.orEmpty(),
             attemptText = projection?.attempt?.text,
             attemptKey = projection?.let { it.generation to it.attempt?.attemptId },
-            settledAttempt = projection?.settledAttempt?.let { "attempt:${projection.generation}:${it.attemptId}" to it.seq },
+            settledAttempt = projection?.settledAttempt?.let { attemptRowKey(projection.generation, it.attemptId) to it.seq },
             downloadEnabled = !snapshot.downloading,
             onDownload = { message, attachment ->
                 if (!snapshot.downloading) {

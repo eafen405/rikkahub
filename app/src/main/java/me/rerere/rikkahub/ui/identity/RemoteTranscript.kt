@@ -103,7 +103,7 @@ internal fun RemoteTranscript(
     val presentation = remember { RemoteTranscriptPresentation() }
     val rows = presentation.update(
         messages, attemptText,
-        attemptKey?.takeIf { attemptText != null }?.let { "attempt:${it.first}:${it.second}" },
+        attemptKey?.takeIf { attemptText != null }?.let { attemptRowKey(it.first, it.second) },
         visibleKeys, reading.followTail, settledAttempt,
     )
     val keys = rows.map { it.key }

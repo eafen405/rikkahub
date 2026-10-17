@@ -42,6 +42,13 @@ internal data class RemoteReadingPosition(
     }
 }
 
+/**
+ * The one statement of the attempt row key convention. A live attempt and the settlement that
+ * replaces it must spell the same key, or [RemoteTranscriptPresentation] stops recognising the
+ * row it is carrying and the deferred formatting silently disappears.
+ */
+internal fun attemptRowKey(generation: String, attemptId: String?): String = "attempt:$generation:$attemptId"
+
 /** A visual row; canonical messages remain in the shared session projection. */
 internal data class RemoteTranscriptRow(
     val key: String,
