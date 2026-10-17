@@ -80,6 +80,18 @@ class RemoteReceiveStateTest {
         assertNull(state.selectedChat.value)
         assertTrue(state.sessions.value.sessions.isEmpty())
     }
+    @Test fun `the published snapshot is the account's own state, not a receiver copy`() = runTest {
+        val sessions = Sessions().apply { gate = CompletableDeferred() }
+        val backend = Chats()
+        val state = RemoteReceiveState(sessions, backgroundScope, { RemoteChatState(backend, backgroundScope, Store(), "https://fairy") })
+        // The refresh starts inside bind: the page's snapshot must already be the one the
+        // account is asking for, not a copy that arrives on the next dispatch.
+        state.bind("alice", 1)
+        assertTrue(state.sessions.value.loading)
+        sessions.gate!!.complete(Unit); runCurrent()
+        assertEquals(listOf("alice-main", "alice-other"), state.sessions.value.sessions.map { it.id })
+    }
+
     @Test fun `notification waits for initial list and authenticates target before selecting it`() = runTest {
         val sessions = Sessions().apply { gate = CompletableDeferred() }
         val backend = Chats()

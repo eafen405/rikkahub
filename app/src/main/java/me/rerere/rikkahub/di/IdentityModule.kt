@@ -95,9 +95,13 @@ val identityModule = module {
     }
 
     single {
+        val receiver = get<RemoteReceiveState>()
         AccountSession(
             backend = get<IdentityBackend>(),
             store = get<CredentialStore>(),
+            // The publisher binds reception as it publishes the account, so the sessions page
+            // never renders a list that belongs to the previous one.
+            onAccountChanged = receiver::bindIdentity,
         )
     }
 }
