@@ -163,7 +163,7 @@ class RemoteAttachmentStateTest {
             sessionId="s1", generation="g1", version=1, cursor=0, durableThroughSeq=0,
             messages=listOf(RemoteChatMessage("m1",0,null,2,2,"原件在这里",listOf(attachment))),
             attempt=RemoteChatAttempt("a1",1,"正在回复"), replyStatus=1,
-            throughSeq=0, fromSeq=0, events=listOf(RemoteChatRecoveryTest.event(0)),
+            throughSeq=0, fromSeq=0, events=listOf(remoteEvent(0)),
         )); runCurrent()
         val snapshot = state.snapshot.value
         assertNull(snapshot.failure)

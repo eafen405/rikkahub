@@ -106,14 +106,14 @@ class RemoteReceiveStateTest {
             RemoteChatState(backend, backgroundScope, store, "https://fairy", notifies = settle)
         }, platform)
         receiver.bind("alice", 1); runCurrent()
-        backend.updates.getValue("alice-main").emit(RemoteNotificationStateTest.delivery(1).copy(sessionId = "alice-main",
+        backend.updates.getValue("alice-main").emit(deliveryProjection(1).copy(sessionId = "alice-main",
             activity = RemoteActivity(2, listOf(2), "alice-main/1", 1, 1))); runCurrent()
-        backend.updates.getValue("alice-other").emit(RemoteNotificationStateTest.delivery(2).copy(sessionId = "alice-other")); runCurrent()
+        backend.updates.getValue("alice-other").emit(deliveryProjection(2).copy(sessionId = "alice-other")); runCurrent()
         assertEquals(listOf("alice-other"), alerts.map { it.sessionId })
-        backend.updates.getValue("alice-main").emit(RemoteNotificationStateTest.delivery(3, 2).copy(sessionId = "alice-main", throughSeq = 1,
+        backend.updates.getValue("alice-main").emit(deliveryProjection(3, 2).copy(sessionId = "alice-main", throughSeq = 1,
             activity = RemoteActivity(2, listOf(2, 4), "alice-main/1", 1, 3, delivery = RemoteActivityDelivery("alice-main/1", 3)))); runCurrent()
         assertEquals(listOf("alice-other", "alice-main"), alerts.map { it.sessionId })
-        backend.updates.getValue("alice-main").emit(RemoteNotificationStateTest.delivery(4, 3).copy(sessionId = "alice-main", throughSeq = 1,
+        backend.updates.getValue("alice-main").emit(deliveryProjection(4, 3).copy(sessionId = "alice-main", throughSeq = 1,
             activity = RemoteActivity(1, episodeId = "alice-main/1", throughSeq = 4,
                 completed = RemoteCompletedActivity("alice-main/1", 1, 4, 3), delivery = RemoteActivityDelivery("alice-main/1", 3)))); runCurrent()
         assertEquals(2, alerts.size)

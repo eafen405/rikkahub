@@ -25,7 +25,7 @@ class RemoteChatStateTest {
         override fun observe(token: String, sessionId: String): Flow<RemoteChatProjection> =
             events.getOrPut("$token/$sessionId") { MutableSharedFlow(extraBufferCapacity = 8) }
         override suspend fun page(token: String, sessionId: String, throughSeq: Long, beforeSeq: Long) =
-            ChatHistoryPage(sessionId, throughSeq, 0, events = (0 until beforeSeq).map(RemoteChatRecoveryTest::event))
+            ChatHistoryPage(sessionId, throughSeq, 0, events = eventCoverage(0, beforeSeq - 1))
         override suspend fun checkpoint(token: String, sessionId: String) = ack
         override suspend fun read(token: String, sessionId: String) = projection(sessionId)
         override suspend fun send(token: String, sessionId: String, requestId: String, text: String, uploadIds: List<String>): ChatReceipt {
@@ -72,7 +72,7 @@ class RemoteChatStateTest {
         // Same delivery, same raw coverage of seq 0..8, only the attempt text moves.
         fun committed(version: Long, attempt: RemoteChatAttempt) =
             projection("s1", version, attempt).copy(
-                cursor = 8, events = (0L..8L).map(RemoteChatRecoveryTest::event),
+                cursor = 8, events = eventCoverage(0, 8),
                 messages = listOf(delivery),
             )
 
@@ -206,12 +206,12 @@ class RemoteChatStateTest {
         val message = RemoteChatMessage("user-1", 8, requestId, 1, 1, "original")
         val flow = backend.events.getValue("alice/s1")
         flow.emit(projection("s1", 1).copy(messages = listOf(message), cursor = 8, durableThroughSeq = 7,
-            events = (0L..8L).map(RemoteChatRecoveryTest::event)))
+            events = eventCoverage(0, 8)))
         runCurrent()
         assertEquals(requestId, state.snapshot.value.pending?.requestId)
         backend.ack = 8
         flow.emit(projection("s1", 2).copy(messages = listOf(message), cursor = 8, durableThroughSeq = 8,
-            events = (0L..8L).map(RemoteChatRecoveryTest::event)))
+            events = eventCoverage(0, 8)))
         runCurrent()
         assertNull(state.snapshot.value.pending)
     }
@@ -240,7 +240,7 @@ class RemoteChatStateTest {
 
         fun projection(id: String, version: Long = 0, attempt: RemoteChatAttempt? = null) =
             RemoteChatProjection(id, "g1", version, 7, 7, emptyList(), attempt, if (attempt == null) 0 else 1, null,
-                7, 0, (0L..7L).map(RemoteChatRecoveryTest::event))
+                7, 0, eventCoverage(0, 7))
     }
 }
 

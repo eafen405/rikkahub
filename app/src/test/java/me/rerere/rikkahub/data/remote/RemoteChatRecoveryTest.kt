@@ -24,6 +24,7 @@ class RemoteChatRecoveryTest {
         var failSave = false
         var saveGate: CompletableDeferred<Unit>? = null
         override suspend fun load(key: ChatSyncKey) = records[key] ?: ChatSyncRecord()
+        fun seed(key: ChatSyncKey, record: ChatSyncRecord) { records[key] = record }
         override suspend fun save(key: ChatSyncKey, record: ChatSyncRecord) {
             saveGate?.let { withContext(NonCancellable) { it.await() } }
             if (failSave) throw IOException("disk unavailable")
@@ -40,7 +41,7 @@ class RemoteChatRecoveryTest {
         var connections = 0
         var sendCount = 0
         var sendGate: CompletableDeferred<Unit>? = null
-        var onSend: (() -> Unit)? = null
+        var onSend: (suspend () -> Unit)? = null
         val pages = mutableListOf<Pair<Long,Long>>()
         override fun observe(token:String,sessionId:String):Flow<RemoteChatProjection> = flow {
             connections++
@@ -57,7 +58,7 @@ class RemoteChatRecoveryTest {
             if (failPage) throw IdentityUnreachable(IOException("page lost"))
             val from = (beforeSeq - 2).coerceAtLeast(0)
             return ChatHistoryPage(sessionId,throughSeq,from,from.takeIf { it > 0 },from>0,
-                (from until beforeSeq).map(::event), listOf(message(from)))
+                eventCoverage(from, beforeSeq - 1), listOf(message(from)))
         }
         override suspend fun checkpoint(token:String,sessionId:String): Long {
             if (checkpointFailure) throw IdentityUnreachable(IOException("writer flush failed"))
@@ -104,7 +105,7 @@ class RemoteChatRecoveryTest {
     }
     @Test fun `saved consumption without a message cache still reloads all history`() = runTest {
         val key=ChatSyncKey("https://fairy",1,"s")
-        val store=Store().apply { records[key]=ChatSyncRecord(5,true) }
+        val store=Store().apply { seed(key, ChatSyncRecord(5,true)) }
         val backend=Backend()
         val state=RemoteChatState(backend,backgroundScope,store,"https://fairy")
         state.bind("new-token","s",1);runCurrent()
@@ -116,7 +117,7 @@ class RemoteChatRecoveryTest {
     }
     @Test fun `pending command is saved before network and restored with same identity after process recreation`() = runTest {
         val store=Store();val key=ChatSyncKey("https://fairy",1,"s");val backend=Backend()
-        backend.onSend={ assertNotNull(store.records[key]?.pending) }
+        backend.onSend={ assertNotNull(store.load(key).pending) }
         val state=RemoteChatState(backend,backgroundScope,store,"https://fairy")
         state.bind("alice","s",1);runCurrent();state.send("exact\n text");runCurrent()
         val original=state.snapshot.value.pending!!
@@ -211,7 +212,7 @@ class RemoteChatRecoveryTest {
     @Test fun `recovered generation replaces observed unsaved event with interrupted closer without losing pending or W`() = runTest {
         val key=ChatSyncKey("https://fairy",1,"s")
         val pending=StoredChatSend("stable-request","not yet confirmed")
-        val store=Store().apply { records[key]=ChatSyncRecord(0,true,pending) }
+        val store=Store().apply { seed(key, ChatSyncRecord(0,true,pending)) }
         val backend=Backend().apply { ack=0 }
         val state=RemoteChatState(backend,backgroundScope,store,"https://fairy")
         state.bind("alice","s",1);runCurrent()
@@ -220,7 +221,7 @@ class RemoteChatRecoveryTest {
         state.detach();state.bind("rotated-token","s",1);runCurrent()
         backend.ack=1
         val closer=Json.parseToJsonElement("""{"seq":1,"type":"turn/end","status":"interrupted"}""") as JsonObject
-        backend.flow.emit(projection(0,1).copy(generation="recovered-agent",events=listOf(event(0),closer),
+        backend.flow.emit(projection(0,1).copy(generation="recovered-agent",events=listOf(remoteEvent(0),closer),
             messages=listOf(message(1).copy(text="recovered partial",status=3))));runCurrent()
         assertTrue(state.snapshot.value.connected)
         assertNull(state.snapshot.value.failure)
@@ -228,11 +229,11 @@ class RemoteChatRecoveryTest {
         assertEquals(listOf("recovered partial"),state.snapshot.value.projection?.messages?.map { it.text })
         assertEquals(1L,state.snapshot.value.consumedThrough)
         assertEquals("stable-request",state.snapshot.value.pending?.requestId)
-        assertEquals(pending,store.records[key]?.pending)
+        assertEquals(pending,store.load(key).pending)
     }
     @Test fun `shorter new generation removes orphan bubbles and refills body despite saved consumption`() = runTest {
         val key=ChatSyncKey("https://fairy",1,"s")
-        val store=Store().apply { records[key]=ChatSyncRecord(0,true) };val backend=Backend().apply { ack=0 }
+        val store=Store().apply { seed(key, ChatSyncRecord(0,true)) };val backend=Backend().apply { ack=0 }
         val state=RemoteChatState(backend,backgroundScope,store,"https://fairy")
         state.bind("alice","s",1);runCurrent();backend.flow.emit(projection(0,3).copy(generation="old"));runCurrent()
         state.detach();state.bind("alice","s",1);runCurrent()
@@ -249,10 +250,9 @@ class RemoteChatRecoveryTest {
         assertNotNull(state.snapshot.value.failure)
     }
     companion object {
-        fun event(seq:Long):JsonObject=Json.parseToJsonElement("""{"seq":$seq,"type":"fact","payload":"$seq"}""") as JsonObject
         fun message(seq:Long)=RemoteChatMessage("m$seq",seq,null,2,2,"body$seq")
         fun projection(from:Long,cursor:Long,version:Long=1)=RemoteChatProjection(
             "s","g",version,cursor,-1,listOf(message(cursor)),null,0,null,
-            cursor,from,(from..cursor).map(::event),from>0,from.takeIf { it>0 })
+            cursor,from,eventCoverage(from,cursor),from>0,from.takeIf { it>0 })
     }
 }
