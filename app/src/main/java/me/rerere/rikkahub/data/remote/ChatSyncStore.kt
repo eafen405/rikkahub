@@ -15,7 +15,13 @@ data class ChatSyncRecord(
     val pending: StoredChatSend? = null,
     /** Null establishes a notification baseline; separate from sync and read positions. */
     val notificationThrough: Long? = null,
+    /** The episode this record has already claimed, so a later fact never claims it twice. */
     val notificationEpisodeId: String? = null,
+    /**
+     * A claimed episode the reminder has not published yet. The session only records what it
+     * owes; reception sees every session and publishes the backlog once.
+     */
+    val notificationOwed: Boolean = false,
 )
 
 interface ChatSyncStore {

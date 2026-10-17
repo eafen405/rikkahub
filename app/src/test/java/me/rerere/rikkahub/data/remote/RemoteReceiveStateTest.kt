@@ -51,7 +51,7 @@ class RemoteReceiveStateTest {
     }
     @Test fun `account receiver observes every listed session and selected page shares its runtime`() = runTest {
         val backend = Chats()
-        val state = RemoteReceiveState(Sessions(), backgroundScope) { RemoteChatState(backend, backgroundScope, Store(), "https://fairy") }
+        val state = RemoteReceiveState(Sessions(), backgroundScope, { RemoteChatState(backend, backgroundScope, Store(), "https://fairy") })
         state.bind("alice", 1); runCurrent()
         assertEquals(setOf("alice-main", "alice-other"), backend.opens.map { it.second }.toSet())
         val main = state.stateForSession("alice-main")
@@ -69,7 +69,7 @@ class RemoteReceiveStateTest {
     @Test fun `switching accounts retires old observers and ignores late list results`() = runTest {
         val sessions = Sessions().apply { gate = CompletableDeferred() }
         val backend = Chats()
-        val state = RemoteReceiveState(sessions, backgroundScope) { RemoteChatState(backend, backgroundScope, Store(), "https://fairy") }
+        val state = RemoteReceiveState(sessions, backgroundScope, { RemoteChatState(backend, backgroundScope, Store(), "https://fairy") })
         state.bind("alice", 1); runCurrent()
         state.bind("bob", 2); runCurrent()
         sessions.gate!!.complete(Unit); runCurrent()
@@ -83,7 +83,7 @@ class RemoteReceiveStateTest {
     @Test fun `notification waits for initial list and authenticates target before selecting it`() = runTest {
         val sessions = Sessions().apply { gate = CompletableDeferred() }
         val backend = Chats()
-        val state = RemoteReceiveState(sessions, backgroundScope) { RemoteChatState(backend, backgroundScope, Store(), "https://fairy") }
+        val state = RemoteReceiveState(sessions, backgroundScope, { RemoteChatState(backend, backgroundScope, Store(), "https://fairy") })
         state.bind("alice", 1); runCurrent()
         val open = async { state.openNotification("alice-other") }; runCurrent()
         assertFalse(open.isCompleted)
@@ -102,9 +102,9 @@ class RemoteReceiveStateTest {
             override fun isForeground() = false
             override fun publish(key: ChatSyncKey, preview: String) { alerts += key }
         }
-        val receiver = RemoteReceiveState(Sessions(), backgroundScope) {
-            RemoteChatState(backend, backgroundScope, store, "https://fairy", notifications = platform)
-        }
+        val receiver = RemoteReceiveState(Sessions(), backgroundScope, { settle ->
+            RemoteChatState(backend, backgroundScope, store, "https://fairy", notifies = settle)
+        }, platform)
         receiver.bind("alice", 1); runCurrent()
         backend.updates.getValue("alice-main").emit(RemoteNotificationStateTest.delivery(1).copy(sessionId = "alice-main",
             activity = RemoteActivity(2, listOf(2), "alice-main/1", 1, 1))); runCurrent()

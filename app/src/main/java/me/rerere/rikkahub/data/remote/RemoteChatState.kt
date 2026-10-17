@@ -110,9 +110,9 @@ class RemoteChatState(
     private val retryDelayMillis: Long = 1_000,
     private val attachmentsBackend: RemoteAttachmentBackend? = null,
     private val jobsBackend: RemoteJobBackend? = null,
-    private val notifications: RemoteNotificationPlatform? = null,
-    private val notificationsEnabled: () -> Boolean = { true },
     private val speechBackend: RemoteSpeechBackend? = null,
+    /** Whether this session settles what it owes the reminder; reception publishes the backlog. */
+    private val notifies: Boolean = false,
 ) {
     private val mutable = MutableStateFlow(RemoteChatSnapshot())
     val snapshot: StateFlow<RemoteChatSnapshot> = mutable.asStateFlow()
@@ -134,6 +134,7 @@ class RemoteChatState(
     private var download: Job? = null
     private var taskObserver: Job? = null
     private var taskEpoch = 0L
+    private var notifier: (() -> Unit)? = null
 
     suspend fun speechAvailability(expectedEpoch: Long): RemoteSpeechAvailability {
         check(expectedEpoch == attachmentEpoch)
@@ -256,6 +257,33 @@ class RemoteChatState(
         else bind(credential, selected.sessionId, selected.userShortId)
     }
 
+    /** Reception, which sees every session, is told each time this one finished a commit. */
+    internal fun onSettled(notify: () -> Unit) {
+        notifier = notify
+    }
+
+    /**
+     * The reminder this session still owes: the session it opens and the output to show. It is
+     * read from the durable record the settlement committed, so a backlog restored by a later run
+     * is still owed rather than silently dropped.
+     */
+    internal suspend fun owedReminder(): Pair<ChatSyncKey, String>? {
+        val selected = key ?: return null
+        val record = load(selected)
+        // The episode identity only answers "is anything owed"; session ids stay opaque.
+        if (record.notificationEpisodeId == null || !record.notificationOwed) return null
+        val preview = mutable.value.projection?.messages
+            ?.lastOrNull { it.role == 2 && it.seq <= record.consumedThrough }?.text
+            ?.take(160)?.ifBlank { null } ?: "Fairy 已完成本次活动"
+        return selected to preview
+    }
+
+    /** Consumed before the attempt: a crash here may miss the sound, but cannot replay it. */
+    internal suspend fun consumeReminder() {
+        val selected = key ?: return
+        update(selected) { if (it.notificationOwed) it.copy(notificationOwed = false) else it }
+    }
+
     private fun scheduleSync(boundEpoch: Long, opened: Long, credential: String, selected: ChatSyncKey) {
         if (synchronization?.isActive == true) return
         val generation = mutable.value.projection?.generation
@@ -285,16 +313,16 @@ class RemoteChatState(
                 val target = minOf(latest.cursor, acknowledged)
                 require(covered(target)) { "历史范围尚未完整补齐" }
                 val old = load(selected)
-                var notification: String? = null
                 // Ask the predicate about the watermark this commit publishes, so the reminder and
                 // the panel answer with the same value: one trust rule, not two.
                 val activity = observed.activityEstablishedAt(maxOf(old.consumedThrough, target))
                 // Only a complete, acknowledged snapshot can establish notification facts.
-                val settleNotifications = notifications != null && activity.status != 0
+                val settleNotifications = notifies && activity.status != 0
                 val facts = listOfNotNull(
                     activity.completed?.let { it.finishedSeq to it.episodeId },
                     activity.delivery?.let { it.seq to it.episodeId },
                 ).sortedBy { it.first }
+                var claimed: String? = null
                 val saved = update(selected) { record ->
                     var next = record.copy(consumedThrough = maxOf(record.consumedThrough, target), initialized = true)
                     if (settleNotifications) {
@@ -302,13 +330,16 @@ class RemoteChatState(
                         val candidate = facts.lastOrNull {
                             through != null && it.first > through && it.first <= target && it.second != record.notificationEpisodeId
                         }
-                        notification = candidate?.second
+                        claimed = candidate?.second
                         next = next.copy(
                             notificationThrough = maxOf(through ?: -1, target),
                             notificationEpisodeId = candidate?.second ?: record.notificationEpisodeId
                                 ?: facts.lastOrNull { it.first <= target }?.second,
                         )
                     }
+                    // Durable before any publication: a crash here may miss a sound, but cannot replay
+                    // it, and reception reads the backlog from this same record.
+                    if (claimed != null) next = next.copy(notificationOwed = true)
                     next
                 }
                 if (!currentGeneration()) return@launch
@@ -318,13 +349,6 @@ class RemoteChatState(
                         ChatConsumptionBatch(selected, latest.generation, old.consumedThrough, saved.consumedThrough, !old.initialized)
                     } else mutable.value.batch,
                 )
-                // Commit-before-attempt: a crash here may miss a sound, but cannot replay it.
-                // Read foreground now, after awaited disk work, for every page in the app.
-                if (notification != null && notificationsEnabled() && notifications?.isForeground() == false) {
-                    val preview = latest.messages.lastOrNull { it.role == 2 && it.seq <= target }?.text
-                        ?.take(160)?.ifBlank { null } ?: "Fairy 已完成本次活动"
-                    notifications.publish(selected, preview)
-                }
                 val pending = load(selected).pending
                 if (pending != null && latest.messages.any { it.requestId == pending.requestId && it.seq <= acknowledged }) {
                     clearPending(selected, pending.requestId)
@@ -336,6 +360,9 @@ class RemoteChatState(
                     syncing = mutable.value.consumedThrough < (mutable.value.projection?.cursor ?: -1),
                     projection = mutable.value.projection?.copy(durableThroughSeq = maxOf(latest.durableThroughSeq, acknowledged)),
                 )
+                // Reception waits for every session to stop catching up before it publishes, so it
+                // has to hear about a session that settled without owing anything too.
+                notifier?.invoke()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {

@@ -132,9 +132,9 @@ class RemoteReceiveControllerTest {
         val chats = Chats()
         val screens = Screen()
         val account = AccountSession(Identity(), InMemoryCredentialStore())
-        private val receiver = RemoteReceiveState(Sessions(), scope) {
+        private val receiver = RemoteReceiveState(Sessions(), scope, {
             RemoteChatState(chats, scope, Store(), "https://fairy")
-        }
+        })
         val controller = RemoteReceiveController(account, receiver, platform, host, screens.lifecycle, scope)
     }
 
