@@ -65,7 +65,7 @@ class RemoteNotificationWireTest {
             override suspend fun create(token: String) = error("not used")
             override suspend fun primary(token: String) = OwnedSession(sessionId, primary = true)
         }, backgroundScope, { settle ->
-            RemoteChatState(RemoteChatApi(endpoint, OkHttpClient()), backgroundScope, store, endpoint, notifies = settle)
+            RemoteChatState(RemoteChatApi(endpoint, OkHttpClient()), backgroundScope, store, endpoint, settleReminders = settle)
         }, platform)
         val state: RemoteChatState
         try {

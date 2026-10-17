@@ -136,7 +136,7 @@ class RemoteReceiveStateTest {
             override fun publish(key: ChatSyncKey, preview: String) { alerts += key }
         }
         val receiver = RemoteReceiveState(Sessions(), backgroundScope, { settle ->
-            RemoteChatState(backend, backgroundScope, store, "https://fairy", notifies = settle)
+            RemoteChatState(backend, backgroundScope, store, "https://fairy", settleReminders = settle)
         }, platform)
         receiver.bind("alice", 1); runCurrent()
         backend.updates.getValue("alice-main").emit(deliveryProjection(1).copy(sessionId = "alice-main",
