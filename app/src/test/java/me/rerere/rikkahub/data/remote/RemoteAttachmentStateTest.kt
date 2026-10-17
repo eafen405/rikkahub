@@ -80,7 +80,7 @@ class RemoteAttachmentStateTest {
         val unknown = state.snapshot.value.pending!!
         assertEquals(listOf("a".repeat(32)),unknown.uploadIds)
         assertTrue(unknown.acceptanceUnknown)
-        val serialized = Json.encodeToString(store.records.values.single())
+        val serialized = Json.encodeToString(store.load(ChatSyncKey("https://fairy", 1, "s1")))
         val restoredStore = Store().apply { records[ChatSyncKey("https://fairy",1,"s1")] = Json.decodeFromString(serialized) }
         state.detach()
         val restored = RemoteChatState(chat,backgroundScope,restoredStore,"https://fairy",attachmentsBackend=files)

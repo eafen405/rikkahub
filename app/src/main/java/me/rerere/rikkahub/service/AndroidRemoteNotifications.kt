@@ -24,7 +24,11 @@ import me.rerere.rikkahub.data.remote.RemoteNotificationPlatform
 import me.rerere.rikkahub.data.remote.RemoteReceivePlatform
 import me.rerere.rikkahub.ui.identity.RemoteNotificationTarget
 
-/** Android publication only; eligibility and durable consumption belong to shared session sync. */
+/**
+ * Android's notification and reception platform: it publishes reminders and answers the
+ * foreground/enabled facts reception reads. Eligibility and durable consumption belong to shared
+ * session sync, never here.
+ */
 class AndroidRemoteNotifications(private val context: Context) : RemoteNotificationPlatform, RemoteReceivePlatform {
     private val preferences = context.getSharedPreferences("ourfairy.remote-receive", Context.MODE_PRIVATE)
     private val mutableEnabled = MutableStateFlow(preferences.getBoolean("enabled", false))

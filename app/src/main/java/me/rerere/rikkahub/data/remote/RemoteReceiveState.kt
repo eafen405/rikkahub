@@ -116,13 +116,14 @@ class RemoteReceiveState(
     /**
      * Publish only once no observed session is still catching up: a session mid-recovery has not
      * said whether it owes anything, so publishing earlier would spend the reminder on whichever
-     * sessions answered first. The backlog is read back from the records, so a session that never
-     * connects cannot hold another session's reminder hostage.
+     * sessions answered first — one reminder per arriving session. A session whose attempt failed
+     * has answered too: it owes nothing on that connection, so it stops holding the backlog and a
+     * permanently unreachable session cannot keep another session's reminder waiting.
      */
     private fun publishBacklog() {
         val platform = notifications ?: return
         if (publishing?.isActive == true) return
-        if (chats.values.any { it.snapshot.value.syncing }) return
+        if (chats.values.any { it.snapshot.value.isCatchingUp }) return
         val started = epoch
         publishing = scope.launch {
             try {
@@ -143,7 +144,8 @@ class RemoteReceiveState(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                // Nothing was consumed, so the record still owes it and this can be tried again.
+                // The records were consumed before the attempt, so this attempt's sound is lost
+                // rather than replayed; the retry only publishes what a later settlement owes.
                 scope.launch { delay(RETRY_MILLIS); publishBacklog() }
             } finally {
                 publishing = null

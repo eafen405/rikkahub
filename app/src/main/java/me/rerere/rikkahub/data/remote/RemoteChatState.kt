@@ -95,6 +95,17 @@ data class RemoteChatSnapshot(
             committedThrough >= reported.throughSeq
         return if (complete) reported else reported.copy(status = 0)
     }
+
+    /**
+     * Whether this session still has to answer before the account's backlog can be settled.
+     *
+     * A session that has not received its opening frame yet reports neither `syncing` nor a
+     * failure, so waiting on `syncing` alone let the first arrival spend the reminder before the
+     * other sessions said what they owed. A failed attempt has answered — it owes nothing on that
+     * connection — so it stops holding the others back.
+     */
+    internal val isCatchingUp: Boolean
+        get() = failure == null && (connecting || syncing)
 }
 enum class RemoteMessageFormat { PLAIN, MARKDOWN }
 fun remoteMessageFormat(message: RemoteChatMessage) =
@@ -112,7 +123,7 @@ class RemoteChatState(
     private val jobsBackend: RemoteJobBackend? = null,
     private val speechBackend: RemoteSpeechBackend? = null,
     /** Whether this session settles what it owes the reminder; reception publishes the backlog. */
-    private val notifies: Boolean = false,
+    private val settleReminders: Boolean = false,
 ) {
     private val mutable = MutableStateFlow(RemoteChatSnapshot())
     val snapshot: StateFlow<RemoteChatSnapshot> = mutable.asStateFlow()
@@ -317,7 +328,7 @@ class RemoteChatState(
                 // the panel answer with the same value: one trust rule, not two.
                 val activity = observed.activityEstablishedAt(maxOf(old.consumedThrough, target))
                 // Only a complete, acknowledged snapshot can establish notification facts.
-                val settleNotifications = notifies && activity.status != 0
+                val settleNotifications = settleReminders && activity.status != 0
                 val facts = listOfNotNull(
                     activity.completed?.let { it.finishedSeq to it.episodeId },
                     activity.delivery?.let { it.seq to it.episodeId },
@@ -325,7 +336,10 @@ class RemoteChatState(
                 var claimed: String? = null
                 val saved = update(selected) { record ->
                     var next = record.copy(consumedThrough = maxOf(record.consumedThrough, target), initialized = true)
-                    if (settleNotifications) {
+                    // A detach or rebind that landed while this commit was in flight must not claim a
+                    // reminder for a binding the user no longer sees: the consumption above is durable
+                    // and safe, but a claim registered here would be published after the rebind.
+                    if (settleNotifications && current(boundEpoch, opened)) {
                         val through = record.notificationThrough
                         val candidate = facts.lastOrNull {
                             through != null && it.first > through && it.first <= target && it.second != record.notificationEpisodeId
@@ -342,7 +356,14 @@ class RemoteChatState(
                     if (claimed != null) next = next.copy(notificationOwed = true)
                     next
                 }
-                if (!currentGeneration()) return@launch
+                if (!currentGeneration()) {
+                    // A detach or rebind landed while the claim was being persisted. The consumption
+                    // above stays (it is durable progress on this log), but the reminder must not
+                    // outlive the binding that claimed it: retiring it here is what keeps a rebind
+                    // from replaying a sound the user never saw.
+                    update(selected) { if (it.notificationOwed) it.copy(notificationOwed = false) else it }
+                    return@launch
+                }
                 mutable.value = mutable.value.copy(
                     consumedThrough = saved.consumedThrough, initialized = true,
                     batch = if (target > old.consumedThrough || !old.initialized) {

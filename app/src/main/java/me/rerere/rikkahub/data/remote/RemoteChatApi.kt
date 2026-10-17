@@ -99,19 +99,18 @@ interface RemoteChatBackend {
     /**
      * One session's whole projection, read once.
      *
-     * This is the client mirror of the documented `/chat/read` route: it names
-     * only the session, and the backend's default opening range answers with the
-     * same cumulative snapshot [observe] pushes, built by the same projection
-     * step. Reading and observing are two shapes of one answer, which is why a
-     * caller must not treat the values as independent facts.
+     * This is the client mirror of the documented `/chat/read` route: one POST naming only the
+     * session, answered with a projection value rather than a stream. The backend builds both
+     * this and [observe]'s snapshots from the same projection step, so they carry the same
+     * value type; this client does not assert that the two answers are identical, and nothing
+     * here should be read as saying so.
      *
-     * No page opens a session with it. Every place that shows a session needs
-     * the stream, and [observe]'s opening snapshot already carries everything a
-     * read would return, so opening with both would spend a second request on
-     * the same answer. It stays as the adapter for the one-shot case the route
-     * exists for — a diagnostic, or a cold-start cross-check, that wants the
-     * state once without holding a subscription open — rather than because
-     * anything calls it today.
+     * No page opens a session with it. Every place that shows a session needs the stream, and
+     * [observe]'s opening snapshot already carries what a read returns, so opening with both
+     * would spend a second request on the same answer. It stays as the adapter for the one-shot
+     * case the route exists for — a diagnostic, or a cold-start cross-check, that wants the
+     * state once without holding a subscription open — rather than because anything calls it
+     * today.
      */
     suspend fun read(token: String, sessionId: String): RemoteChatProjection
 

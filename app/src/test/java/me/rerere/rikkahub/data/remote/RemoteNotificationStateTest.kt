@@ -88,7 +88,7 @@ class RemoteNotificationStateTest {
         platform: Platform,
         enabled: () -> Boolean = { true },
     ) = RemoteReceiveState(Sessions(), backgroundScope, { settle ->
-        RemoteChatState(backend, backgroundScope, store, "https://fairy", notifies = settle)
+        RemoteChatState(backend, backgroundScope, store, "https://fairy", settleReminders = settle)
     }, platform, enabled)
 
     private fun TestScope.opened(
@@ -136,11 +136,10 @@ class RemoteNotificationStateTest {
         // unreadable/missing local consumption restores the same empty record.
         state.detach()
         store.forget()
-        val reset = opened(store, backend, platform)
+        opened(store, backend, platform)
         backend.updates.emit(deliveryProjection(9)); runCurrent()
         assertEquals(1, platform.alerts.size)
         assertEquals(9L, store.load(first).notificationThrough)
-        assertNotNull(reset)
     }
     @Test fun `active delivery and its final completion share one reminder while the next episode can alert`() = runTest {
         val store = Store()
@@ -244,12 +243,11 @@ class RemoteNotificationStateTest {
         assertEquals(1L, store.load(key).notificationThrough)
         assertEquals("delivered1", state.snapshot.value.projection?.messages?.single()?.text)
         state.detach(); platform.crashBefore = false
-        val restarted = opened(store, backend, platform)
+        opened(store, backend, platform)
         backend.updates.emit(deliveryProjection(1)); runCurrent()
         assertTrue(platform.alerts.isEmpty())
         backend.updates.emit(deliveryProjection(2, 2).copy(throughSeq = 1)); runCurrent()
         assertEquals(1, platform.alerts.size)
-        assertNotNull(restarted)
     }
     @Test fun `crash after notify cannot repeat that episode on restart`() = runTest {
         val store = Store()
@@ -260,11 +258,10 @@ class RemoteNotificationStateTest {
         backend.updates.emit(deliveryProjection(1)); runCurrent()
         assertEquals(1, platform.alerts.size)
         state.detach(); platform.crashAfter = false
-        val restarted = opened(store, backend, platform)
+        opened(store, backend, platform)
         backend.updates.emit(deliveryProjection(1)); runCurrent()
         assertEquals(1, platform.alerts.size)
         assertEquals(1L, store.load(key).notificationThrough)
-        assertNotNull(restarted)
     }
     @Test fun `an account retired during consumption commit cannot publish its late notification`() = runTest {
         val store = Store()
@@ -279,5 +276,20 @@ class RemoteNotificationStateTest {
         assertTrue(platform.alerts.isEmpty())
         assertEquals("bob-session", state.snapshot.value.sessionId)
         assertEquals(1L, store.load(alice).notificationThrough)
+    }
+
+    @Test fun `a detach during the consumption commit claims no reminder for the next binding`() = runTest {
+        val store = Store()
+        val key = ChatSyncKey("https://fairy", 1, "s")
+        store.seed(key, ChatSyncRecord(0, true, notificationThrough = 0))
+        val platform = Platform(); val backend = Backend()
+        val state = opened(store, backend, platform)
+        val gate = CompletableDeferred<Unit>(); store.saveGate = gate
+        backend.updates.emit(deliveryProjection(1)); runCurrent()
+        // The claim is being persisted while the page releases this binding.
+        state.detach(); runCurrent()
+        gate.complete(Unit); runCurrent()
+        assertFalse("a retired binding must not owe a reminder", store.load(key).notificationOwed)
+        assertTrue(platform.alerts.isEmpty())
     }
 }
