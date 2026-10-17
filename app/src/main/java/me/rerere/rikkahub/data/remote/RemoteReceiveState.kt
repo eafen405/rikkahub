@@ -13,11 +13,11 @@ import kotlinx.coroutines.launch
 /**
  * One account owns each session runtime. The page shares these instances with reception.
  *
- * The list is not copied here: [sessions] is the very flow [OwnedSessionState] publishes, so
- * there is no second copy that a collector could lag behind. Whose list it is is decided by
- * [bind], which the identity publisher calls in the turn it publishes the account (see
- * [bindIdentity]) — the previous account's list and chats are retired before a collector can
- * observe the new identity.
+ * [owned] is the account's list and the actions on it, and it is the very state this receiver
+ * binds and watches — the page drives it directly, and there is no copy here that a collector
+ * could lag behind. Whose list it is is decided by [bind], which the identity publisher calls in
+ * the turn it publishes the account (see [bindIdentity]) — the previous account's list and chats
+ * are retired before a collector can observe the new identity.
  *
  * Reception also owns the reminder: a session records the episode it owes in its own durable
  * record, and this module sees every session, so a backlog is published as one reminder rather
@@ -30,10 +30,14 @@ class RemoteReceiveState(
     private val notifications: RemoteNotificationPlatform? = null,
     private val notificationsEnabled: () -> Boolean = { true },
 ) {
-    private val owned = OwnedSessionState(backend, scope)
-
-    /** The account's own snapshot; the page renders this flow and does not decide whose it is. */
-    val sessions: StateFlow<SessionsSnapshot> = owned.snapshot
+    /**
+     * The account's own session list and the actions on it.
+     *
+     * Exposed as the very state [bind] binds and this receiver watches, so the page that renders
+     * and drives it acts on the same instance reception does; there is no receiver-level copy of
+     * its list or of its five requests.
+     */
+    val owned: OwnedSessionState = OwnedSessionState(backend, scope)
 
     private val mutableSelected = MutableStateFlow<RemoteChatState?>(null)
 
@@ -87,11 +91,6 @@ class RemoteReceiveState(
     }
 
     fun stateForSession(sessionId: String): RemoteChatState? = chats[sessionId]
-    fun refresh() = owned.refresh()
-    fun create() = owned.create()
-    fun select(sessionId: String) = owned.select(sessionId)
-    fun read(sessionId: String) = owned.read(sessionId)
-    fun returnToPrimary() = owned.returnToPrimary()
 
     /** Intent data is a target, not authority: use the existing authenticated read. */
     suspend fun openNotification(sessionId: String): Boolean {

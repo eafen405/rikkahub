@@ -238,19 +238,19 @@ class RemoteReceiveControllerTest {
         runCurrent()
         harness.account.signIn("alice", "pw")
         runCurrent()
-        assertEquals(listOf("token-alice-main"), harness.receiver.sessions.value.sessions.map { it.id })
+        assertEquals(listOf("token-alice-main"), harness.receiver.owned.snapshot.value.sessions.map { it.id })
 
         // No dispatcher turn between publication and this read: the app already acts as bob.
         harness.account.signIn("bob", "pw")
         assertEquals("token-bob", harness.account.token)
         assertTrue(
             "the previous account's list must not survive the new account's publication",
-            harness.receiver.sessions.value.sessions.isEmpty(),
+            harness.receiver.owned.snapshot.value.sessions.isEmpty(),
         )
         assertNull(harness.receiver.stateForSession("token-alice-main"))
 
         runCurrent()
-        assertEquals(listOf("token-bob-main"), harness.receiver.sessions.value.sessions.map { it.id })
+        assertEquals(listOf("token-bob-main"), harness.receiver.owned.snapshot.value.sessions.map { it.id })
         assertEquals(listOf("token-bob" to "token-bob-main"), harness.chats.opened.drop(1))
     }
 
@@ -260,13 +260,13 @@ class RemoteReceiveControllerTest {
         val harness = Harness(backgroundScope, foreground = true, enabled = true)
         harness.account.signIn("alice", "pw")
         runCurrent()
-        assertEquals(listOf("token-alice-main"), harness.receiver.sessions.value.sessions.map { it.id })
+        assertEquals(listOf("token-alice-main"), harness.receiver.owned.snapshot.value.sessions.map { it.id })
 
         harness.account.signOut()
         assertNull(harness.account.token)
         assertTrue(
             "a signed-out app must not keep showing the last account's list",
-            harness.receiver.sessions.value.sessions.isEmpty(),
+            harness.receiver.owned.snapshot.value.sessions.isEmpty(),
         )
         assertNull(harness.receiver.selectedChat.value)
     }
