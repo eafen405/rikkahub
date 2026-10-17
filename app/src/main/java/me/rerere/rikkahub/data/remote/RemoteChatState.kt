@@ -72,13 +72,29 @@ data class RemoteChatSnapshot(
     val attachmentNotice: String? = null,
     val taskDetail: RemoteTaskDetail? = null,
 ) {
-    /** Backend facts stay intact; incomplete observation/recovery cannot establish silence. */
+    /**
+     * Backend facts stay intact; incomplete observation/recovery cannot establish silence.
+     * Completeness is answered once, by [activityEstablishedAt]; this getter only adds whether a
+     * binding observes at all. [syncing] is a catch-up hint, not a second trust rule: a committed
+     * prefix stays established while the next one is being fetched.
+     */
     val activity: RemoteActivity
-        get() {
-            val reported = projection?.activity ?: RemoteActivity()
-            return if (connected && !syncing && initialized && consumedThrough >= reported.throughSeq) reported
-            else reported.copy(status = 0)
-        }
+        get() = if (connected && initialized) activityEstablishedAt(consumedThrough)
+        else (projection?.activity ?: RemoteActivity()).copy(status = 0)
+
+    /**
+     * The activity [committedThrough] establishes: the projection's own cursor and the reported run
+     * must both be covered by that watermark. Presentation asks this about the prefix it committed;
+     * the reminder asks it about the watermark it is publishing, so both consume one answer about
+     * which sequence established the fact, and an uncovered prefix stays unknown rather than
+     * silence.
+     */
+    internal fun activityEstablishedAt(committedThrough: Long): RemoteActivity {
+        val reported = projection?.activity ?: RemoteActivity()
+        val complete = projection != null && committedThrough >= projection.cursor &&
+            committedThrough >= reported.throughSeq
+        return if (complete) reported else reported.copy(status = 0)
+    }
 }
 enum class RemoteMessageFormat { PLAIN, MARKDOWN }
 fun remoteMessageFormat(message: RemoteChatMessage) =
@@ -264,15 +280,17 @@ class RemoteChatState(
                 if (!currentGeneration()) return@launch
                 val acknowledged = backend.checkpoint(credential, selected.sessionId)
                 if (!currentGeneration()) return@launch
-                val latest = mutable.value.projection ?: return@launch
+                val observed = mutable.value
+                val latest = observed.projection ?: return@launch
                 val target = minOf(latest.cursor, acknowledged)
                 require(covered(target)) { "历史范围尚未完整补齐" }
                 val old = load(selected)
                 var notification: String? = null
-                val activity = latest.activity
+                // Ask the predicate about the watermark this commit publishes, so the reminder and
+                // the panel answer with the same value: one trust rule, not two.
+                val activity = observed.activityEstablishedAt(maxOf(old.consumedThrough, target))
                 // Only a complete, acknowledged snapshot can establish notification facts.
-                val settleNotifications = notifications != null && activity.status != 0 &&
-                    target >= latest.cursor && target >= activity.throughSeq
+                val settleNotifications = notifications != null && activity.status != 0
                 val facts = listOfNotNull(
                     activity.completed?.let { it.finishedSeq to it.episodeId },
                     activity.delivery?.let { it.seq to it.episodeId },
