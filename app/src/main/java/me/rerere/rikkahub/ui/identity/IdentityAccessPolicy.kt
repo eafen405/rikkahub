@@ -52,18 +52,16 @@ enum class IdentityDestination {
  * system-management paths impassable rather than merely hidden: they are
  * composed through destinations that do not exist here.
  *
- * **Delivered by this ticket:** [IdentityDestination.SIGN_IN],
- * [IdentityDestination.REGISTER], [IdentityDestination.ACCOUNT] and
- * [IdentityDestination.INVITES]. Remote conversation is ticket #28 and the
- * gateway is ticket #43; until those land their destinations are deliberately
- * undelivered, so they compose the explicit not-ready page and never a working
- * feature.
+ * **Delivered by this release:** [IdentityDestination.SIGN_IN],
+ * [IdentityDestination.REGISTER], [IdentityDestination.ACCOUNT],
+ * [IdentityDestination.SESSIONS], [IdentityDestination.INVITES], and — since
+ * ticket #43 — [IdentityDestination.GATEWAY] for the administrator alone.
  *
  * The conversation destination deserves a note: rikkahub already *has* a chat
  * page, and it is tempting to call it delivered because it exists. It is not,
  * because that page drives local model execution — exactly the path the first
- * version must not leave triggerable. It becomes composable when ticket #28
- * makes it a remote conversation.
+ * version must not leave triggerable. The delivered conversation path is the
+ * sessions page, which talks to the backend, not `Screen.Chat`.
  */
 object IdentityAccessPolicy {
 
@@ -74,6 +72,7 @@ object IdentityAccessPolicy {
         IdentityDestination.ACCOUNT,
         IdentityDestination.SESSIONS,
         IdentityDestination.INVITES,
+        IdentityDestination.GATEWAY,
     )
 
     /** Whether this release has an implementation behind the destination. */
@@ -104,12 +103,16 @@ object IdentityAccessPolicy {
             // agent is refused here by the policy as well as by the backend.
             IdentityDestination.INVITES -> identity.isAdmin
 
-            // Not delivered by this ticket; the rule above already refused it.
+            // Configuring the shared providers, models and ASR connection is the
+            // administrator's own operation, exactly like minting invites. An
+            // ordinary agent cannot compose the page at all, and the backend
+            // refuses the requests it would have made as well.
+            IdentityDestination.GATEWAY -> identity.isAdmin
+
+            // Not delivered by this release; the rule above already refused it.
             // Listed so that landing the implementation makes the compiler
             // revisit this decision instead of silently picking a default.
-            IdentityDestination.CONVERSATION,
-            IdentityDestination.GATEWAY,
-            -> identity.signedIn
+            IdentityDestination.CONVERSATION -> identity.signedIn
         }
     }
 }
