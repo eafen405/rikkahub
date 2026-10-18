@@ -650,13 +650,13 @@ private fun AsrSection(
     onSave: (GatewayAsrDraft) -> Unit,
 ) {
     val asr = config.asr
-    var model by remember(asr) { mutableStateOf(asr.model) }
-    var endpoint by remember(asr) { mutableStateOf(asr.endpoint) }
-    var maxDuration by remember(asr) { mutableStateOf(asr.maxDurationMs.toString()) }
-    var maxAudioBytes by remember(asr) { mutableStateOf(asr.maxAudioBytes.toString()) }
-    var timeout by remember(asr) { mutableStateOf(asr.timeoutMs.toString()) }
-    var maxGlobal by remember(asr) { mutableStateOf(asr.maxGlobalInFlight.toString()) }
-    var maxUser by remember(asr) { mutableStateOf(asr.maxUserInFlight.toString()) }
+    var model by remember(asr) { mutableStateOf(asr.model.orEmpty()) }
+    var endpoint by remember(asr) { mutableStateOf(asr.endpoint.orEmpty()) }
+    var maxDuration by remember(asr) { mutableStateOf(asr.maxDurationMs?.toString().orEmpty()) }
+    var maxAudioBytes by remember(asr) { mutableStateOf(asr.maxAudioBytes?.toString().orEmpty()) }
+    var timeout by remember(asr) { mutableStateOf(asr.timeoutMs?.toString().orEmpty()) }
+    var maxGlobal by remember(asr) { mutableStateOf(asr.maxGlobalInFlight?.toString().orEmpty()) }
+    var maxUser by remember(asr) { mutableStateOf(asr.maxUserInFlight?.toString().orEmpty()) }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {

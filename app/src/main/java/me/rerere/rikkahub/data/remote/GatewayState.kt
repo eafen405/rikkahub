@@ -75,13 +75,17 @@ class GatewayState(
     fun load(token: String) {
         mutable.value = mutable.value.copy(loading = true, failure = null)
         scope.launch {
-            try {
-                val config = backend.read(token)
-                mutable.value = GatewaySnapshot(config = config)
-            } catch (refused: IdentityRefused) {
-                mutable.value = mutable.value.copy(loading = false, failure = refused.failure())
-            } catch (unreachable: IdentityUnreachable) {
-                mutable.value = mutable.value.copy(loading = false, failure = GatewayFailure(unreachable = true))
+            // A read takes the same lock as a write: a reload issued while a
+            // write is landing must not publish a snapshot older than it.
+            writes.withLock {
+                try {
+                    val config = backend.read(token)
+                    mutable.value = GatewaySnapshot(config = config)
+                } catch (refused: IdentityRefused) {
+                    mutable.value = mutable.value.copy(loading = false, failure = refused.failure())
+                } catch (unreachable: IdentityUnreachable) {
+                    mutable.value = mutable.value.copy(loading = false, failure = GatewayFailure(unreachable = true))
+                }
             }
         }
     }

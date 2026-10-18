@@ -69,16 +69,22 @@ data class GatewaySelection(
     val reasoningEffort: String? = null,
 )
 
-/** The ASR connection the backend uses for speech input. */
+/**
+ * The ASR connection the backend uses for speech input.
+ *
+ * Every setting is nullable because a deployment whose `speech` row is not
+ * mounted answers `null` for it; the page then shows the connection as not
+ * configurable here instead of failing to decode the whole document.
+ */
 @Serializable
 data class GatewayAsr(
-    val model: String,
-    val endpoint: String,
-    val maxDurationMs: Int,
-    val maxAudioBytes: Int,
-    val timeoutMs: Int,
-    val maxGlobalInFlight: Int,
-    val maxUserInFlight: Int,
+    val model: String? = null,
+    val endpoint: String? = null,
+    val maxDurationMs: Int? = null,
+    val maxAudioBytes: Int? = null,
+    val timeoutMs: Int? = null,
+    val maxGlobalInFlight: Int? = null,
+    val maxUserInFlight: Int? = null,
     val available: Boolean = false,
     val credential: GatewayCredential,
 )
