@@ -22,6 +22,8 @@ import me.rerere.rikkahub.data.remote.ChatSyncStore
 import me.rerere.rikkahub.data.remote.AccountSession
 import me.rerere.rikkahub.data.remote.AndroidKeystoreCredentialStore
 import me.rerere.rikkahub.data.remote.CredentialStore
+import me.rerere.rikkahub.data.remote.GatewayApi
+import me.rerere.rikkahub.data.remote.GatewayBackend
 import me.rerere.rikkahub.data.remote.IdentityApi
 import me.rerere.rikkahub.data.remote.IdentityBackend
 import me.rerere.rikkahub.data.remote.SessionApi
@@ -55,6 +57,10 @@ val identityModule = module {
 
     single<RemoteChatBackend> {
         RemoteChatApi(baseUrl = identityEndpoint, client = get<OkHttpClient>())
+    }
+
+    single<GatewayBackend> {
+        GatewayApi(baseUrl = identityEndpoint, client = get<OkHttpClient>())
     }
 
     single<RemoteAttachmentBackend> { RemoteAttachmentApi(identityEndpoint, get<OkHttpClient>()) }

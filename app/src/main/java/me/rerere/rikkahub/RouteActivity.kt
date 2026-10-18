@@ -86,6 +86,7 @@ import me.rerere.rikkahub.ui.hooks.readBooleanPreference
 import me.rerere.rikkahub.ui.hooks.readStringPreference
 import me.rerere.rikkahub.ui.hooks.rememberCustomAsrState
 import me.rerere.rikkahub.ui.hooks.rememberCustomTtsState
+import me.rerere.rikkahub.ui.identity.GatewayPage
 import me.rerere.rikkahub.ui.identity.IdentityAccessPolicy
 import me.rerere.rikkahub.ui.identity.IdentityAccountPage
 import me.rerere.rikkahub.ui.identity.IdentityDestination
@@ -436,10 +437,17 @@ class RouteActivity : ComponentActivity() {
                             entry<Screen.Account> {
                                 IdentityAccountPage(
                                     onSessions = { backStack.add(Screen.Sessions) },
+                                    onGateway = { backStack.add(Screen.Gateway) },
                                     onSignedOut = {
                                         backStack.clear()
                                         backStack.add(Screen.SignIn)
                                     },
+                                )
+                            }
+
+                            entry<Screen.Gateway> {
+                                GatewayPage(
+                                    onBack = { backStack.removeLastOrNull() },
                                 )
                             }
 
@@ -741,11 +749,12 @@ class RouteActivity : ComponentActivity() {
  * accidentally make it reachable — landing its ticket has to add the mapping
  * here on purpose.
  */
-private fun Screen.toIdentityDestination(): IdentityDestination? = when (this) {
+internal fun Screen.toIdentityDestination(): IdentityDestination? = when (this) {
     is Screen.SignIn -> IdentityDestination.SIGN_IN
     is Screen.Register -> IdentityDestination.REGISTER
     is Screen.Account -> IdentityDestination.ACCOUNT
     is Screen.Sessions -> IdentityDestination.SESSIONS
+    is Screen.Gateway -> IdentityDestination.GATEWAY
     else -> null
 }
 
@@ -767,6 +776,10 @@ sealed interface Screen : NavKey {
     /** This account's remote sessions: list, create, choose, return to main. */
     @Serializable
     data object Sessions : Screen
+
+    /** The administrator's shared gateway: providers, models and the ASR connection. */
+    @Serializable
+    data object Gateway : Screen
 
     @Serializable
     data class Chat(

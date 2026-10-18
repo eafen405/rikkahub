@@ -49,4 +49,64 @@
   <string name="sessions_selected_title">You are in</string>
   <string name="sessions_selected_none">No session selected.</string>
   <string name="sessions_chat_not_ready">Chatting in this session is not available yet.</string>
+  <string name="gateway_entry_title">Shared gateway</string>
+  <string name="gateway_entry_explain">Providers, models and the ASR connection used by every conversation.</string>
+  <string name="gateway_entry_action">Open the gateway</string>
+
+  <string name="gateway_title">Shared gateway</string>
+  <string name="gateway_explain">These settings are shared by every conversation on the backend. A saved model selection applies from each conversation\'s next reply; a reply already running finishes on the model it started with.</string>
+  <string name="gateway_refresh_action">Reload</string>
+  <string name="gateway_back_action">Back to account</string>
+  <string name="gateway_loading">Reading the gateway…</string>
+  <string name="gateway_unreachable">The gateway could not be reached.</string>
+  <string name="gateway_read_only">This deployment does not let the phone change this.</string>
+
+  <string name="gateway_selection_title">Shared model selection</string>
+  <string name="gateway_selection_next_turn">Applies from each conversation\'s next reply. A reply already running keeps the model it started with.</string>
+  <string name="gateway_selection_reasoning">Reasoning effort</string>
+  <string name="gateway_selection_reasoning_hint">Leave blank to keep the model\'s own default.</string>
+  <string name="gateway_selection_model">Model</string>
+  <string name="gateway_selection_save">Save the shared selection</string>
+
+  <string name="gateway_routes_title">Provider routes</string>
+  <string name="gateway_routes_empty">No provider route is configured.</string>
+  <string name="gateway_route_provider">Provider</string>
+  <string name="gateway_route_display_name">Display name</string>
+  <string name="gateway_route_api">Protocol</string>
+  <string name="gateway_route_base_url">Base URL</string>
+  <string name="gateway_route_api_key_env">API key reference</string>
+  <string name="gateway_route_api_key_env_hint">The name of the backend environment variable that holds the key, not the key itself.</string>
+  <string name="gateway_route_models">Models</string>
+  <string name="gateway_route_models_hint">One model per line: id | name | context window | max tokens | input modalities.</string>
+  <string name="gateway_route_credential">Credential</string>
+  <string name="gateway_route_credential_configured">configured on the backend</string>
+  <string name="gateway_route_credential_missing">not configured on the backend</string>
+  <string name="gateway_route_credential_writable">writable here</string>
+  <string name="gateway_route_credential_read_only">read-only here</string>
+  <string name="gateway_route_in_use">A reply is running on this route. Editing or deleting it is refused until that reply ends.</string>
+  <string name="gateway_route_locked">This deployment does not let the phone change routes.</string>
+  <string name="gateway_route_edit">Edit</string>
+  <string name="gateway_route_delete">Delete</string>
+  <string name="gateway_route_new">New route</string>
+  <string name="gateway_route_save">Save route</string>
+  <string name="gateway_route_cancel">Cancel</string>
+  <string name="gateway_route_delete_confirm">Delete this route?</string>
+  <string name="gateway_route_invalid_models">Line(s) %1$s are not a model: check the numbers and the id.</string>
+
+  <string name="gateway_asr_title">Speech input connection</string>
+  <string name="gateway_asr_available">Speech input is available.</string>
+  <string name="gateway_asr_unavailable">Speech input is not available: the backend has no usable key or endpoint.</string>
+  <string name="gateway_asr_model">Model</string>
+  <string name="gateway_asr_endpoint">Endpoint</string>
+  <string name="gateway_asr_max_duration">Longest take (ms)</string>
+  <string name="gateway_asr_max_audio_bytes">Largest take (bytes)</string>
+  <string name="gateway_asr_timeout">Request timeout (ms)</string>
+  <string name="gateway_asr_max_global">Concurrent takes, all users</string>
+  <string name="gateway_asr_max_user">Concurrent takes, one user</string>
+  <string name="gateway_asr_save">Save the speech connection</string>
+
+  <string name="gateway_saved_yes">saved</string>
+  <string name="gateway_saved_no">not saved</string>
+  <string name="gateway_signed_out">Sign in to read the gateway configuration.</string>
+  <string name="gateway_asr_invalid">Every limit must be a whole number.</string>
 </resources>

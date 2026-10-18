@@ -278,6 +278,7 @@ fun IdentityRegisterPage(
 @Composable
 fun IdentityAccountPage(
     onSessions: () -> Unit,
+    onGateway: () -> Unit,
     onSignedOut: () -> Unit,
     session: AccountSession = koinInject(),
     backend: IdentityBackend = koinInject(),
@@ -341,6 +342,25 @@ fun IdentityAccountPage(
             }
 
             if (user?.isAdmin == true) {
+                Spacer(Modifier.height(24.dp))
+                Text(
+                    text = stringResource(R.string.gateway_entry_title),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = stringResource(R.string.gateway_entry_explain),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = onGateway,
+                    enabled = token != null,
+                ) {
+                    Text(stringResource(R.string.gateway_entry_action))
+                }
+
                 Spacer(Modifier.height(24.dp))
                 Text(
                     text = stringResource(R.string.identity_invites_title),
