@@ -133,9 +133,16 @@ class PresentationBenchmarkActivity : ComponentActivity() {
                     LaunchedEffect(Unit) {
                         windowOpen.await()
                         backend.awaitCompletion()
-                        // Report when the terminal document is actually on screen. The deadline is
-                        // reported as a miss, never as a small number.
-                        withTimeoutOrNull(TERMINAL_TIMEOUT_MILLIS) { terminalPresented.await() }
+                        // The history workload carries no reply, so there is no terminal document to
+                        // wait for; waiting would park the idle transcript inside the window. The
+                        // other workloads wait for their terminal document to reach a frame, and a
+                        // deadline that expires is reported as a miss, never as a small number.
+                        if (workload.replyChars > 0) {
+                            withTimeoutOrNull(TERMINAL_TIMEOUT_MILLIS) { terminalPresented.await() }
+                        } else {
+                            // Let the rendered history settle so the frame sample covers its layout.
+                            delay(HISTORY_SETTLE_MILLIS)
+                        }
                         summary = writeResult(scenario, workload, backend, state.snapshot.value, runId)
                         if (runId != null) finish()
                     }
@@ -197,8 +204,8 @@ class PresentationBenchmarkActivity : ComponentActivity() {
             put("latestAppliedVersion", latestApplied)
             put("latestEmittedVersion", emitted)
             put("unappliedAtEnd", if (newestApplied) 0 else 1)
-            put("terminalPresented", terminalRichMs >= 0)
-            put("terminalRichPresentedMs", terminalRichMs)
+            put("terminalPresented", if (workload.replyChars > 0) terminalRichMs >= 0 else null)
+            put("terminalRichPresentedMs", if (workload.replyChars > 0) terminalRichMs else null)
             put("receiveToStateP50Ms", percentile(stateNanos, 0.50))
             put("receiveToStateP95Ms", percentile(stateNanos, 0.95))
             put("receiveToFrameP50Ms", percentile(frameLatencyNanos, 0.50))
@@ -243,5 +250,8 @@ class PresentationBenchmarkActivity : ComponentActivity() {
          * presented. It is a reporting deadline, not a performance claim.
          */
         const val TERMINAL_TIMEOUT_MILLIS = 60_000L
+
+        /** How long the reply-less history workload is given to lay out before it reports. */
+        const val HISTORY_SETTLE_MILLIS = 2_000L
     }
 }
