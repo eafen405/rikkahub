@@ -212,7 +212,10 @@ class PresentationBenchmarkActivity : ComponentActivity() {
             put("heapStartBytes", startHeap)
             put("heapEndBytes", usedHeap())
         }
-        val file = java.io.File(filesDir, "presentation-$scenario.json")
+        // One file per run: a later run of the same scenario must never be mistaken for this one,
+        // and a reader on the device does not have to parse the log ring.
+        val name = if (runId == null) "presentation-$scenario.json" else "presentation-$scenario-$runId.json"
+        val file = java.io.File(filesDir, name)
         file.writeText(result.toString(2))
         Log.i(LOG_TAG, result.toString())
         return "完成：${file.name}；同步写入 logcat $LOG_TAG。"
