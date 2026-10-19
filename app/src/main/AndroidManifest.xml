@@ -59,12 +59,6 @@
     android:theme="@style/Theme.Rikkahub"
     android:usesCleartextTraffic="true"
     tools:targetApi="33">
-        <!-- Offline synthetic renderer measurement; contains no backend/account data. -->
-        <activity
-            android:name=".ui.identity.PresentationBenchmarkActivity"
-            android:exported="true"
-            android:label="OurFairy presentation measurement" />
-
     <activity
       android:name=".ui.activity.SafeModeActivity"
       android:exported="false"
