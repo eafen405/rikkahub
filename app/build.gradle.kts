@@ -125,6 +125,25 @@ android {
                 identityEndpointField(configuredIdentityEndpoint ?: emulatorIdentityEndpoint),
             )
         }
+        // Release-shaped measurement build. It keeps release's optimizer, signing and package id
+        // so its numbers describe a shipping build, and it is the only variant that compiles the
+        // measurement sources in src/perf. The version name marks the build in logs and reports.
+        create("perf") {
+            initWith(getByName("release"))
+            versionNameSuffix = "-perf"
+            signingConfig = signingConfigs.getByName("release")
+            optimization {
+                enable = true
+            }
+            matchingFallbacks += "release"
+            buildConfigField("String", "VERSION_NAME", "\"${android.defaultConfig.versionName}\"")
+            buildConfigField("String", "VERSION_CODE", "\"${android.defaultConfig.versionCode}\"")
+            buildConfigField(
+                "String",
+                "IDENTITY_ENDPOINT",
+                identityEndpointField(configuredIdentityEndpoint.orEmpty()),
+            )
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
