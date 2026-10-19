@@ -3,6 +3,14 @@ package me.rerere.rikkahub.ui.identity
 import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import me.rerere.rikkahub.ui.fairy.FairyBackground
+import me.rerere.rikkahub.ui.fairy.FairySettingsGroup
+import me.rerere.rikkahub.ui.fairy.FairyWindowTopBar
+import me.rerere.rikkahub.ui.fairy.FairyWindowState
+import me.rerere.rikkahub.ui.fairy.FairyPresence
+import me.rerere.rikkahub.ui.fairy.FairyWindowBarHeight
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,7 +29,6 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -83,20 +90,19 @@ fun GatewayPage(
     }
     val snapshot by state.snapshot.collectAsStateWithLifecycle()
 
-    Scaffold { innerPadding ->
+    var open by remember { mutableStateOf<String?>(null) }
+    Box(Modifier.fillMaxSize()) {
+        FairyBackground(watermark = false)
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
-                .padding(24.dp)
+                .statusBarsPadding()
+                .padding(top = FairyWindowBarHeight)
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.Top,
         ) {
-            Text(
-                text = stringResource(R.string.gateway_title),
-                style = MaterialTheme.typography.headlineMedium,
-            )
-            Spacer(Modifier.height(4.dp))
             Text(
                 text = stringResource(R.string.gateway_explain),
                 style = MaterialTheme.typography.bodySmall,
@@ -136,29 +142,47 @@ fun GatewayPage(
                 }
 
                 Spacer(Modifier.height(20.dp))
-                SelectionSection(
-                    config = config,
-                    busy = snapshot.working,
-                    canWrite = token != null,
-                    onSave = { selection -> token?.let { state.select(it, selection) } },
-                )
+                FairySettingsGroup(
+                    title = "共用模型", tag = "MODEL", summary = "${config.selection.provider} / ${config.selection.model}",
+                    open = open == "selection",
+                    onToggle = { open = if (open == "selection") null else "selection" },
+                ) {
+                    SelectionSection(
+                        config = config,
+                        busy = snapshot.working,
+                        canWrite = token != null,
+                        onSave = { selection -> token?.let { state.select(it, selection) } },
+                    )
+                }
 
                 Spacer(Modifier.height(20.dp))
-                RoutesSection(
-                    config = config,
-                    busy = snapshot.working,
-                    canWrite = token != null,
-                    onSave = { draft, saved -> token?.let { state.saveRoute(it, draft, saved) } },
-                    onDelete = { provider -> token?.let { state.deleteRoute(it, provider) } },
-                )
+                FairySettingsGroup(
+                    title = "供应商", tag = "PROVIDERS", summary = "${config.routes.size} 个供应商",
+                    open = open == "routes",
+                    onToggle = { open = if (open == "routes") null else "routes" },
+                ) {
+                    RoutesSection(
+                        config = config,
+                        busy = snapshot.working,
+                        canWrite = token != null,
+                        onSave = { draft, saved -> token?.let { state.saveRoute(it, draft, saved) } },
+                        onDelete = { provider -> token?.let { state.deleteRoute(it, provider) } },
+                    )
+                }
 
                 Spacer(Modifier.height(20.dp))
-                AsrSection(
-                    config = config,
-                    busy = snapshot.working,
-                    canWrite = token != null,
-                    onSave = { draft -> token?.let { state.saveAsr(it, draft) } },
-                )
+                FairySettingsGroup(
+                    title = "语音识别", tag = "SPEECH", summary = "录音转写连接配置",
+                    open = open == "asr",
+                    onToggle = { open = if (open == "asr") null else "asr" },
+                ) {
+                    AsrSection(
+                        config = config,
+                        busy = snapshot.working,
+                        canWrite = token != null,
+                        onSave = { draft -> token?.let { state.saveAsr(it, draft) } },
+                    )
+                }
             }
 
             Spacer(Modifier.height(24.dp))
@@ -170,11 +194,13 @@ fun GatewayPage(
                 Text(stringResource(R.string.gateway_refresh_action))
             }
 
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
-                Text(stringResource(R.string.gateway_back_action))
-            }
+            Spacer(Modifier.height(24.dp))
         }
+        FairyWindowTopBar(
+            window = FairyWindowState(FairyPresence.IDLE),
+            subtitle = stringResource(R.string.gateway_title),
+            onNavigateBack = onBack,
+        )
     }
 }
 

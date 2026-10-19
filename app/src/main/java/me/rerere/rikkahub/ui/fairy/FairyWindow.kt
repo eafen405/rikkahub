@@ -9,7 +9,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -41,14 +40,12 @@ import androidx.lifecycle.compose.currentStateAsState
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.tan
-import kotlinx.coroutines.delay
 
 private const val IDLE_BREATH_MS = 4200f
 private const val WORKING_BREATH_MS = 1600f
 private const val IDLE_SCAN_PERIOD_MS = 2400f
 private const val SPEECH_PULSE_MS = 180
 private const val SPEECH_PULSE_SCALE = 1.03f
-private const val TEXT_GROWTH_WINDOW_MS = 400L
 /** One Fairy.gif loop: working gaze cycle and flash period. */
 private const val WORKING_CYCLE_MS = 4200f
 private const val IDLE_GAZE_MS = 9000f
@@ -80,46 +77,6 @@ internal fun fairyGlowRange(presence: FairyPresence): ClosedFloatingPointRange<F
         FairyPresence.OFFLINE -> null
     }
 
-/**
- * Tracks growth of the tail message's visible text. [growing] is true while
- * the text grew within the last 400 ms; [pulse] increments on every growth
- * step (the SPEAKING eye pulse listens to it).
- */
-@Stable
-class FairyTextGrowth internal constructor() {
-    var growing by mutableStateOf(false)
-        internal set
-    var pulse by mutableIntStateOf(0)
-        internal set
-}
-
-@Composable
-fun rememberFairyTextGrowth(key: Any?, visibleLength: Int): FairyTextGrowth {
-    val growth = remember { FairyTextGrowth() }
-    val previous = remember(key) { intArrayOf(visibleLength) }
-    LaunchedEffect(key, visibleLength) {
-        val grew = visibleLength > previous[0]
-        previous[0] = visibleLength
-        if (!grew) {
-            growth.growing = false
-            return@LaunchedEffect
-        }
-        growth.pulse++
-        growth.growing = true
-        // A newer growth step restarts this effect, extending the window.
-        delay(TEXT_GROWTH_WINDOW_MS)
-        growth.growing = false
-    }
-    return growth
-}
-
-/**
- * Inputs for the Fairy window bar in [com.newoether.agora.ui.chat.ChatTopBar]:
- * the presence, whether the screen is expanded (empty session), whether
- * Fairy is working before her reply shows text (see [fairyAwaitingReply]),
- * the SPEAKING eye-pulse counter from [FairyTextGrowth.pulse], and the
- * [FairyEyeController] both window screens follow.
- */
 @androidx.compose.runtime.Immutable
 data class FairyWindowState(
     val presence: FairyPresence,

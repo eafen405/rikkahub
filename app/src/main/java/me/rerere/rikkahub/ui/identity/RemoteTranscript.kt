@@ -1,6 +1,14 @@
 package me.rerere.rikkahub.ui.identity
 
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.Alignment
+import me.rerere.rikkahub.ui.fairy.FairyColorScheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -17,25 +25,23 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.key
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -63,12 +69,12 @@ internal fun RemoteTranscript(
     onDownload: (RemoteChatMessage, RemoteChatAttachment) -> Unit,
     onFinalPresented: () -> Unit = {},
     settledAttempt: Pair<String, Long>? = null,
+    modifier: Modifier = Modifier,
 ) {
     if (messages.isEmpty() && attemptText == null) {
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-            ),
+        Box(
+            modifier = modifier.fillMaxWidth(),
+            contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = "此会话还没有消息。",
@@ -89,7 +95,9 @@ internal fun RemoteTranscript(
                 Column(Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState())
                     .fairyDialogPanel(active = false)
                     .padding(horizontal = FairyDialogPaddingH, vertical = FairyDialogPaddingV)) {
-                    MessageBody(remoteMessageFormat(message), message.text, foreground = LocalFairyTokens.current.textPrimary)
+                    SelectionContainer {
+                        MessageBody(remoteMessageFormat(message), message.text, foreground = LocalFairyTokens.current.textPrimary)
+                    }
                 }
             },
         )
@@ -129,52 +137,61 @@ internal fun RemoteTranscript(
     LaunchedEffect(messages, attemptText, attemptKey) { preservePosition() }
     LazyColumn(
         state = listState,
-        modifier = Modifier.fillMaxWidth().height(480.dp),
+        modifier = modifier.fillMaxWidth().testTag("conversation-messages"),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         items(rows, key = { it.key }) { row ->
             val message = row.message
             val fairy = message == null || message.role == 2
-            Column(
-                modifier = if (fairy) Modifier.fillMaxWidth()
-                    .fairyDialogPanel(active = message == null)
-                    .padding(horizontal = FairyDialogPaddingH, vertical = FairyDialogPaddingV)
-                else Modifier,
-            ) {
-                // Same heading/body geometry before and after a streaming row settles.
-                Text(
-                    text = if (fairy) "Fairy" else "你",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                if (row.text.isNotBlank()) {
-                    MessageBody(
-                        format = message?.let(::remoteMessageFormat) ?: remoteAttemptFormat(),
-                        text = row.text,
-                        onBeforeFormat = ::preservePosition,
-                        onRichPresented = {
-                            if (row.key == rows.lastOrNull()?.key && attemptText == null) onFinalPresented()
-                        },
-                        foreground = if (fairy) LocalFairyTokens.current.textPrimary else MaterialTheme.colorScheme.onSurface,
-                        presentationRow = row,
+            val tokens = LocalFairyTokens.current
+            Box(Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.align(if (fairy) Alignment.CenterStart else Alignment.CenterEnd)
+                        .then(if (fairy) Modifier.fillMaxWidth()
+                            .fairyDialogPanel(active = message == null)
+                            .padding(horizontal = FairyDialogPaddingH, vertical = FairyDialogPaddingV)
+                        else Modifier.widthIn(max = 340.dp)
+                            .background(tokens.userBubble, tokens.userBubbleShape)
+                            .border(1.dp, tokens.userBubbleBorder, tokens.userBubbleShape)
+                            .padding(12.dp))
+                        .then(if (message != null) Modifier.combinedClickable(
+                            onClick = {},
+                            onLongClickLabel = "查看全文",
+                            onLongClick = { detail = message },
+                        ) else Modifier),
+                ) {
+                    // Same heading/body geometry before and after a streaming row settles.
+                    Text(
+                        text = if (fairy) "Fairy" else "你",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                }
-                if (message != null) {
-                    if (message.text.isNotBlank()) {
-                        TextButton(onClick = { detail = message }) { Text("查看全文") }
-                    }
-                    if (message.attachments.isNotEmpty()) {
-                        Spacer(Modifier.height(6.dp))
-                        AttachmentChips(message.attachments, downloadEnabled) { attachment ->
-                            onDownload(message, attachment)
-                        }
-                    }
-                    if (message.status == 3 || message.status == 4) {
-                        Text(
-                            text = if (message.status == 3) "已停止" else "回复失败",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    if (row.text.isNotBlank()) {
+                        MessageBody(
+                            format = message?.let(::remoteMessageFormat) ?: remoteAttemptFormat(),
+                            text = row.text,
+                            onBeforeFormat = ::preservePosition,
+                            onRichPresented = {
+                                if (row.key == rows.lastOrNull()?.key && attemptText == null) onFinalPresented()
+                            },
+                            foreground = if (fairy) LocalFairyTokens.current.textPrimary else MaterialTheme.colorScheme.onSurface,
+                            presentationRow = row,
                         )
+                    }
+                    if (message != null) {
+                        if (message.attachments.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                            AttachmentChips(message.attachments, downloadEnabled) { attachment ->
+                                onDownload(message, attachment)
+                            }
+                        }
+                        if (message.status == 3 || message.status == 4) {
+                            Text(
+                                text = if (message.status == 3) "已停止" else "回复失败",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -223,11 +240,11 @@ internal fun MessageBody(
     foreground: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface,
     presentationRow: RemoteTranscriptRow? = null,
 ) {
-    val settings = me.rerere.rikkahub.ui.context.LocalSettings.current
+    val settings = me.rerere.rikkahub.data.datastore.LocalDisplayPreferences.current
     val base = MaterialTheme.typography.bodyMedium
     val style = base.copy(
-        fontSize = base.fontSize * settings.displaySetting.fontSizeRatio,
-        fontFamily = me.rerere.rikkahub.ui.theme.rememberChatFontFamily(settings.displaySetting),
+        fontSize = base.fontSize * settings.fontSizeRatio,
+        fontFamily = if (settings.serif) androidx.compose.ui.text.font.FontFamily.Serif else androidx.compose.ui.text.font.FontFamily.Default,
     )
     val input by rememberUpdatedState(RemoteBodyInput(text, format))
     var presentation by remember { mutableStateOf(RemoteBodyPresentation(text)) }
@@ -252,9 +269,9 @@ internal fun MessageBody(
         }
     }
     if (document != null) {
-        // Fairy's reply panel is dark in either app theme; use the existing dark rich-text palette inside it.
+        // List and detail use the same Fairy rich-text palette.
         CompositionLocalProvider(LocalDarkMode provides true) {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            MaterialTheme(colorScheme = FairyColorScheme) {
                 MarkdownBlock(content = text, document = document, style = style.copy(color = LocalFairyTokens.current.textPrimary))
             }
         }

@@ -33,7 +33,7 @@ class RemoteNotificationNavigationTest {
         var opened: String? = null
         assertFalse(openRemoteNotification(target, "https://fairy", account) { opened = it; true })
         restoreIdentitySession(account, stack)
-        assertEquals(listOf(Screen.Account), stack)
+        assertEquals(listOf(Screen.Home), stack)
         assertTrue(openRemoteNotification(target, "https://fairy", account) { opened = it; true })
         assertEquals("s2", opened)
     }

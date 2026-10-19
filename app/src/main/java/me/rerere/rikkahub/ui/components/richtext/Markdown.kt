@@ -57,8 +57,6 @@ import kotlinx.datetime.toLocalDateTime
 import me.rerere.hugeicons.HugeIcons
 import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Download04
-import me.rerere.rikkahub.data.datastore.Settings
-import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.ui.modifier.onClick
 import me.rerere.rikkahub.ui.theme.JetbrainsMono
 import me.rerere.ui.markdown.Markdown
@@ -75,7 +73,7 @@ import kotlin.time.Clock
 @Composable
 private fun MarkdownPreview() {
     MaterialTheme {
-        CompositionLocalProvider(LocalSettings provides Settings()) {
+        CompositionLocalProvider {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -132,7 +130,6 @@ fun MarkdownBlock(
     onClickCitation: (String) -> Unit = {},
     document: me.rerere.ui.markdown.MarkdownDocument? = null,
 ) {
-    val enableLatexRendering = LocalSettings.current.displaySetting.enableLatexRendering
     val fontSize = LocalTextStyle.current.merge(style).fontSize
     val density = LocalDensity.current
     val defaultTheme = MarkdownDefaults.theme(style)
@@ -148,7 +145,7 @@ fun MarkdownBlock(
     }
 
     val currentOnClickCitation by rememberUpdatedState(onClickCitation)
-    val components = remember(enableLatexRendering) {
+    val components = remember {
         MarkdownComponents(
             codeBlock = { block ->
                 HighlightCodeBlock(
@@ -169,19 +166,14 @@ fun MarkdownBlock(
                 )
             },
             mathBlock = { formula ->
-                if (enableLatexRendering) {
-                    MathBlock(
-                        latex = formula,
-                        modifier = Modifier.fillMaxWidth(),
-                        fontSize = LocalTextStyle.current.fontSize,
-                    )
-                } else {
-                    // 禁用 LaTeX 渲染时，以等宽字体显示原始公式
-                    MarkdownDefaults.MathBlock(formula)
-                }
+                MathBlock(
+                    latex = formula,
+                    modifier = Modifier.fillMaxWidth(),
+                    fontSize = LocalTextStyle.current.fontSize,
+                )
             },
             table = { table -> TableCard(table) },
-            inlineMath = MarkdownInlineScope::inlineMathWidgets.takeIf { enableLatexRendering },
+            inlineMath = MarkdownInlineScope::inlineMathWidgets,
             inlineLink = { link -> citationWidget(link) { currentOnClickCitation(it) } },
         )
     }

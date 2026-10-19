@@ -1,5 +1,6 @@
 package me.rerere.rikkahub.data.remote
 
+import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -61,6 +62,8 @@ internal fun speechWav(pcm: ByteArray): ByteArray {
 internal class AndroidSpeechCaptureSource : SpeechCaptureSource {
     @Volatile private var recorder: AudioRecord? = null
 
+    // RemoteSpeechInput checks permission; RemoteSpeechInputState reports revocation during capture.
+    @SuppressLint("MissingPermission")
     override suspend fun capture(
         recording: AtomicBoolean,
         maxDurationMs: Int,

@@ -3,31 +3,36 @@ package me.rerere.rikkahub.ui.identity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import me.rerere.rikkahub.ui.fairy.FairyScreen
-import me.rerere.rikkahub.ui.fairy.FairyPresence
-import me.rerere.rikkahub.ui.fairy.ProvideAgoraMotionPolicy
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -36,6 +41,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -44,16 +50,20 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import me.rerere.hugeicons.HugeIcons
+import me.rerere.hugeicons.stroke.Add01
+import me.rerere.hugeicons.stroke.ArrowUp02
 import me.rerere.hugeicons.stroke.Delete02
 import me.rerere.hugeicons.stroke.File01
+import me.rerere.hugeicons.stroke.Image01
 import me.rerere.hugeicons.stroke.Refresh
+import me.rerere.hugeicons.stroke.Stop
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.data.remote.RemoteAttachmentDraft
 import me.rerere.rikkahub.data.remote.RemoteChatAttachment
-import me.rerere.rikkahub.data.remote.RemoteChatMessage
 import me.rerere.rikkahub.data.remote.RemoteChatState
 import me.rerere.rikkahub.data.remote.SessionsSnapshot
-import me.rerere.rikkahub.ui.components.message.ChatMessageFileChip
+import me.rerere.rikkahub.ui.fairy.LocalFairyTokens
+import me.rerere.rikkahub.ui.fairy.fairyPanel
 
 /**
  * A save target carries no usable media type of its own, so the download is written as opaque
@@ -88,6 +98,8 @@ fun RemoteChatPanel(
     var pendingDownload by remember(snapshot.attachmentEpoch) { mutableStateOf<PendingDownload?>(null) }
 
     var speechBusy by remember(snapshot.attachmentEpoch) { mutableStateOf(false) }
+    var speechError by remember(snapshot.attachmentEpoch) { mutableStateOf<String?>(null) }
+    var showTasks by remember(snapshot.attachmentEpoch) { mutableStateOf(false) }
     val drafts = snapshot.attachments
     // Draft editing is frozen while a command is unresolved: the pending record already holds
     // this message's text and upload ids, and changing the draft would contradict a resend.
@@ -138,36 +150,37 @@ fun RemoteChatPanel(
     // string resources from inside message rendering.
     val unreachable = stringResource(R.string.identity_unreachable)
 
-    Column(modifier = modifier.fillMaxWidth()) {
-        ConnectionHeader(
-            connected = snapshot.connected,
-            connecting = snapshot.connecting,
-            failure = snapshot.failure,
-            backendError = projection?.error,
-            unreachable = unreachable,
-            onReconnect = onReconnect,
-        )
-
-        Spacer(Modifier.height(12.dp))
-        ProvideAgoraMotionPolicy(appReduceMotion = false) { FairyScreen(
-            presence = when {
-                snapshot.connecting -> FairyPresence.CONNECTING
-                !snapshot.connected -> FairyPresence.OFFLINE
-                snapshot.activity.status == 2 -> FairyPresence.THINKING
-                snapshot.activity.status == 1 -> FairyPresence.IDLE
-                else -> FairyPresence.CONNECTING
-            },
-            eyeSize = 110.dp,
-            modifier = Modifier.fillMaxWidth().height(150.dp),
-        )
+    if (showTasks) {
+        DisposableEffect(state) { onDispose { state.closeTaskOutput() } }
+        ModalBottomSheet(
+            onDismissRequest = { showTasks = false },
+            containerColor = LocalFairyTokens.current.panelOpaque,
+        ) {
+            Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
+                RemoteTaskCards(
+                    tasks = projection?.tasks.orEmpty(),
+                    detail = snapshot.taskDetail,
+                    connected = snapshot.connected,
+                    onOpen = state::observeTaskOutput,
+                    onClose = state::closeTaskOutput,
+                    onStop = state::stopTask,
+                )
+            }
         }
-        RemoteActivityCard(snapshot.activity)
-
-        if (snapshot.syncing) {
-            Text("正在补齐并保存同步进度…", style = MaterialTheme.typography.bodySmall)
+    }
+    Column(modifier = modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+        if (!snapshot.connected || snapshot.failure != null || projection?.error != null) {
+            ConnectionHeader(
+                connected = snapshot.connected,
+                connecting = snapshot.connecting,
+                failure = snapshot.failure,
+                backendError = projection?.error,
+                unreachable = unreachable,
+                onReconnect = onReconnect,
+            )
         }
         if (snapshot.failure != null && snapshot.syncing) {
-            OutlinedButton(onClick = state::retrySync) { Text("重试同步") }
+            TextButton(onClick = state::retrySync) { Text("重试同步") }
         }
 
         snapshot.pending?.let { pending ->
@@ -196,41 +209,26 @@ fun RemoteChatPanel(
             }
         }
 
-        RemoteTaskCards(
-            tasks = projection?.tasks.orEmpty(),
-            detail = snapshot.taskDetail,
-            connected = snapshot.connected,
-            onOpen = state::observeTaskOutput,
-            onClose = state::closeTaskOutput,
-            onStop = state::stopTask,
-        )
-
-        RemoteDisplayPreferences()
-        Spacer(Modifier.height(12.dp))
-        key(snapshot.attachmentEpoch) { RemoteTranscript(
-            messages = projection?.messages.orEmpty(),
-            attemptText = projection?.attempt?.text,
-            attemptKey = projection?.let { it.generation to it.attempt?.attemptId },
-            settledAttempt = projection?.settledAttempt?.let { attemptRowKey(projection.generation, it.attemptId) to it.seq },
-            downloadEnabled = !snapshot.downloading,
-            onDownload = { message, attachment ->
-                if (!snapshot.downloading) {
-                    pendingDownload = PendingDownload(snapshot.attachmentEpoch, message.messageId, attachment)
-                    saveAs.launch(attachment.name)
-                }
-            },
-        )
-
+        if (!projection?.tasks.isNullOrEmpty()) {
+            TextButton(onClick = { showTasks = true }) { Text("任务 · ${projection.tasks.size}") }
         }
-        Spacer(Modifier.height(12.dp))
-        RemoteSpeechInput(
-            state = state,
-            epoch = snapshot.attachmentEpoch,
-            enabled = !frozen,
-            readDraft = { draft },
-            writeDraft = { draft = it },
-            onBusy = { speechBusy = it },
-        )
+        key(snapshot.attachmentEpoch) {
+            RemoteTranscript(
+                messages = projection?.messages.orEmpty(),
+                attemptText = projection?.attempt?.text,
+                attemptKey = projection?.let { it.generation to it.attempt?.attemptId },
+                settledAttempt = projection?.settledAttempt?.let { attemptRowKey(projection.generation, it.attemptId) to it.seq },
+                modifier = Modifier.weight(1f),
+                downloadEnabled = !snapshot.downloading,
+                onDownload = { message, attachment ->
+                    if (!snapshot.downloading) {
+                        pendingDownload = PendingDownload(snapshot.attachmentEpoch, message.messageId, attachment)
+                        saveAs.launch(attachment.name)
+                    }
+                },
+            )
+        }
+        Spacer(Modifier.height(8.dp))
         Composer(
             draft = draft,
             onDraftChange = { draft = it },
@@ -238,10 +236,21 @@ fun RemoteChatPanel(
             frozen = frozen,
             canSend = canSend,
             replyStatus = projection?.replyStatus ?: 0,
-            importError = importError,
-            onAddFiles = {
+            importError = importError ?: speechError,
+            onAddFiles = { imagesOnly ->
                 selectionEpoch = snapshot.attachmentEpoch
-                picker.launch(arrayOf("*/*"))
+                picker.launch(arrayOf(if (imagesOnly) "image/*" else "*/*"))
+            },
+            speechInput = {
+                RemoteSpeechInput(
+                    state = state,
+                    epoch = snapshot.attachmentEpoch,
+                    enabled = !frozen,
+                    readDraft = { draft },
+                    writeDraft = { draft = it },
+                    onBusy = { speechBusy = it },
+                    onError = { speechError = it },
+                )
             },
             onRemoveAttachment = { state.removeAttachment(it) },
             onRetryAttachment = { state.retryAttachment(it) },
@@ -324,7 +333,7 @@ private fun PendingCommand(
                 Text("含 $attachmentCount 个附件", style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.height(4.dp))
             }
-            Text(text = text, style = MaterialTheme.typography.bodyMedium)
+            Text(text = text, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(8.dp))
 
             if (acceptanceUnknown) {
@@ -361,86 +370,74 @@ private fun Composer(
     canSend: Boolean,
     replyStatus: Int,
     importError: String?,
-    onAddFiles: () -> Unit,
+    onAddFiles: (imagesOnly: Boolean) -> Unit,
+    speechInput: @Composable () -> Unit,
     onRemoveAttachment: (String) -> Unit,
     onRetryAttachment: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
 ) {
     val running = replyStatus == 1 || replyStatus == 2
-
-    Column {
-        OutlinedTextField(
-            value = draft,
-            onValueChange = onDraftChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("消息") },
-            enabled = !frozen,
-        )
-        Spacer(Modifier.height(8.dp))
-        AttachmentDrafts(
-            attachments = attachments,
-            frozen = frozen,
-            importError = importError,
-            onAdd = onAddFiles,
-            onRemove = onRemoveAttachment,
-            onRetry = onRetryAttachment,
-        )
-        Spacer(Modifier.height(12.dp))
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            FilledTonalButton(onClick = onSend, enabled = canSend) { Text("发送") }
-            if (running) {
-                // Stopping is a request the backend settles on its own; the button says so rather
-                // than pretending the reply is already halted.
-                OutlinedButton(onClick = onStop) {
-                    Text(if (replyStatus == 2) "停止中…" else "停止回复")
+    val tokens = LocalFairyTokens.current
+    var menuOpen by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth().padding(bottom = 8.dp).fairyPanel(tokens.panelShape).padding(4.dp)) {
+        if (attachments.isNotEmpty()) {
+            Column(Modifier.heightIn(max = 140.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                attachments.forEach { attachment ->
+                    key(attachment.id) {
+                        AttachmentDraftRow(attachment, frozen,
+                            onRemove = { onRemoveAttachment(attachment.id) },
+                            onRetry = { onRetryAttachment(attachment.id) })
+                    }
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun AttachmentDrafts(
-    attachments: List<RemoteAttachmentDraft>,
-    frozen: Boolean,
-    importError: String?,
-    onAdd: () -> Unit,
-    onRemove: (String) -> Unit,
-    onRetry: (String) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        attachments.forEach { draft ->
-            key(draft.id) {
-                AttachmentDraftRow(
-                    draft = draft,
-                    frozen = frozen,
-                    onRemove = { onRemove(draft.id) },
-                    onRetry = { onRetry(draft.id) },
-                )
+        Row(verticalAlignment = Alignment.Bottom) {
+            Box {
+                IconButton(onClick = { menuOpen = true }, enabled = !frozen) {
+                    Icon(HugeIcons.Add01, contentDescription = "添加附件", modifier = Modifier.size(22.dp))
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false },
+                    containerColor = tokens.panelOpaque) {
+                    DropdownMenuItem(text = { Text("图片") },
+                        leadingIcon = { Icon(HugeIcons.Image01, contentDescription = null) },
+                        onClick = { menuOpen = false; onAddFiles(true) })
+                    DropdownMenuItem(text = { Text("文件") },
+                        leadingIcon = { Icon(HugeIcons.File01, contentDescription = null) },
+                        onClick = { menuOpen = false; onAddFiles(false) })
+                }
+            }
+            TextField(
+                value = draft,
+                onValueChange = onDraftChange,
+                modifier = Modifier.weight(1f),
+                placeholder = { Text("发送消息…") },
+                enabled = !frozen,
+                maxLines = 5,
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    disabledContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    disabledIndicatorColor = Color.Transparent,
+                ),
+            )
+            speechInput()
+            if (running && !canSend) {
+                IconButton(onClick = onStop, enabled = replyStatus != 2) {
+                    Icon(HugeIcons.Stop, contentDescription = if (replyStatus == 2) "停止中…" else "停止回复",
+                        modifier = Modifier.size(22.dp))
+                }
+            } else {
+                IconButton(onClick = onSend, enabled = canSend) {
+                    Icon(HugeIcons.ArrowUp02, contentDescription = "发送消息", modifier = Modifier.size(22.dp))
+                }
             }
         }
-
-        OutlinedButton(onClick = onAdd, enabled = !frozen) {
-            Icon(
-                imageVector = HugeIcons.File01,
-                contentDescription = null,
-                modifier = Modifier.size(16.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text("添加文件")
-        }
-
-        importError?.let { message ->
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
+        importError?.let { Text(it, style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(8.dp)) }
     }
 }
 

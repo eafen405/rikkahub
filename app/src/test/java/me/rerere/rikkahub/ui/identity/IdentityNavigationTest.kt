@@ -33,10 +33,10 @@ class IdentityNavigationTest {
     @Test
     fun `sessions destination survives the navigation library back stack save and restore`() {
         val serializer = NavBackStackSerializer(NavKeySerializer<NavKey>())
-        val original = NavBackStack<NavKey>(Screen.Account, Screen.Sessions)
+        val original = NavBackStack<NavKey>(Screen.Home, Screen.Sessions)
         val saved = Json.encodeToString(serializer, original)
         val restored = Json.decodeFromString(serializer, saved)
-        assertEquals(listOf(Screen.Account, Screen.Sessions), restored.toList())
+        assertEquals(listOf(Screen.Home, Screen.Sessions), restored.toList())
     }
 
     /** A credential the device already holds, or none at all. */
@@ -97,7 +97,7 @@ class IdentityNavigationTest {
         answer.complete(IdentityUser(shortId = 2, name = "second"))
         startup.join()
 
-        assertEquals(listOf(Screen.Account), stack)
+        assertEquals(listOf(Screen.Home), stack)
     }
 
     @Test
@@ -152,6 +152,6 @@ class IdentityNavigationTest {
         startup.join()
 
         assertEquals("the late restore must not take over the account", newer, session.user)
-        assertEquals(listOf(Screen.Account), stack)
+        assertEquals(listOf(Screen.Home), stack)
     }
 }

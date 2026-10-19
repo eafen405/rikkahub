@@ -1,94 +1,30 @@
-# Repository Guidelines
+# OurFairy Android
 
-## Project Overview
+这是 OurFairy 的 Android 客户端。产品规则、术语与版本组合参见相邻 `../OurFairy/` 的 `AGENTS.md`、`CODING_STANDARDS.md`、`GLOSSARY.md`；跨仓集成时再读取 `work/implementation/CONVENTIONS.md` 和 `combo.json`。
 
-RikkaHub is a native Android LLM chat client that supports switching between different AI providers
-for conversations.
-Built with Jetpack Compose, Kotlin, and follows Material 3 Expressive (MD3 Expressive) design language.
+## 实现
 
-## Design Language
+- 围绕首页互动、会话对话、分组配置实现产品能力。代码是否保留以当前产品用途和维护收益判断。
+- `data/remote/` 中的 `AccountSession`、`OwnedSessionState` 和 `RemoteReceiveState` 管理身份、会话归属与接收；页面订阅其状态。会话激活包含回复、后台任务及投递输出。
+- `ChatSyncStore` 的持久消费水位、待确认发送和通知记账用于重连恢复；消息正文来自远程会话。
+- 修改呈现时保留原文及最终格式语义：输出期间可显示纯文本，结束、停止和错误后的正文使用 Markdown；阅读位置由会话呈现维护。
+- 装配与依赖以 `settings.gradle.kts`、`app/build.gradle.kts` 和 `di/` 为准。新增依赖须对应当前功能。
 
-The UI follows Material 3 Expressive. New and reworked screens should match it rather than the older baseline
-Material 3 look (cards with dividers, plain forms).
+## 界面
 
-- The app theme is `MaterialExpressiveTheme` (app/src/main/java/me/rerere/rikkahub/ui/theme/Theme.kt); prefer the
-  expressive variants of components, shapes (`MaterialShapes`), emphasized typography (e.g. `titleSmallEmphasized`)
-  and motion from `androidx.compose.material3` over hand-rolled equivalents.
-- Settings-style and form pages use segmented groups via `CardGroup` (
-  app/src/main/java/me/rerere/rikkahub/ui/components/ui/CardGroup.kt) instead of a card with dividers.
-- Favor larger corner radii, filled/tonal containers, and whole-row click targets.
+根主题是 `ui/fairy/FairyAppTheme.kt` 的 Material 3 Expressive 主题。沿用 Fairy 视觉、现有窗口和折叠配置组，使用 expressive motion、较大圆角及整行点击区域。
 
-## Build, Test, and Development Commands
+显示偏好只由 `DisplayPreferencesStore` 管理。按当前页面需要扩展本地偏好。
+
+## 验证
 
 ```bash
-./gradlew assembleDebug          # 构建 Debug APK
-./gradlew test                   # 运行所有模块的 JVM 单元测试
-./gradlew lint                   # 运行 Android Lint
+ANDROID_HOME=/home/eafen405/Android/Sdk ./gradlew test lintDebug assembleDebug
+ANDROID_HOME=/home/eafen405/Android/Sdk ./gradlew assembleRelease -Pourfairy.identityEndpoint=https://your-backend.example
 ```
 
-## Module Structure
+测试通过、APK 构建和设备验收分别报告。涉及包体时读取实际 APK 和 merged manifest；比较时说明构建类型、ABI 和源码基线。
 
-- **app**: Main application module with UI, ViewModels, and core logic
-- **ai**: AI SDK abstraction layer for different providers (OpenAI, Google, Anthropic)
-- **common**: Common utilities and extensions
-- **document**: Document parsing module for handling PDF, DOCX, PPTX, and EPUB files
-- **highlight**: Code syntax highlighting implementation
-- **material3**: Material color utility extensions used by the app UI
-- **ui**: Reusable Compose UI components that do not depend on app logic
-- **search**: Search functionality SDK for multiple providers (Exa, Tavily, Zhipu, Bing, Brave, SearXNG, and others)
-- **speech**: Speech module for TTS and ASR implementations
-- **web**: Embedded web server module that provides Ktor server startup function and hosts static frontend build files (
-  built from web-ui/ React project)
-- **workspace**: Sandboxed per-workspace file system and shell execution environment exposed to the AI as tools.
+## 文案
 
-## Concepts
-
-- **Assistant**: An assistant configuration with system prompts, model parameters, and conversation isolation. Each
-  assistant maintains its own settings including temperature, context size, custom headers, tools, memory options, regex
-  transformations, and prompt injections (mode/lorebook). Assistants provide isolated chat environments with specific
-  behaviors and capabilities. (app/src/main/java/me/rerere/rikkahub/data/model/Assistant.kt)
-
-- **Conversation**: A persistent conversation thread between the user and an assistant. Each conversation maintains a
-  list of MessageNodes in a tree structure to support message branching, along with metadata like title, creation time,
-  update time, pin status, chat suggestions, optional conversation-level system prompt, and prompt injection bindings.
-  Once a conversation is persisted it also holds a `ConversationConfig` snapshot (chat model, reasoning level, search,
-  MCP servers, workspace, skills) taken from the assistant; from then on chat-page changes to those settings stay on
-  the conversation, and code should read them through `Settings.getAssistantOf(conversation)` /
-  `Settings.getChatModelOf(conversation)` instead of the assistant directly. (
-  app/src/main/java/me/rerere/rikkahub/data/model/Conversation.kt,
-  app/src/main/java/me/rerere/rikkahub/data/model/ConversationConfig.kt)
-
-- **UIMessage**: A platform-agnostic message abstraction that encapsulates chat messages with different types of content
-  parts (text, images, documents, reasoning, tool calls/results, etc.). Each message has a role (USER, ASSISTANT,
-  SYSTEM, TOOL), creation timestamp, model ID, token usage information, and optional annotations. UIMessages support
-  streaming updates through chunk merging. (ai/src/main/java/me/rerere/ai/ui/Message.kt)
-
-- **MessageNode**: A container holding one or more UIMessages to implement message branching functionality. Each node
-  maintains a list of alternative messages and tracks which message is currently selected (selectIndex). This enables
-  users to regenerate responses and switch between different conversation branches, creating a tree-like conversation
-  structure. (app/src/main/java/me/rerere/rikkahub/data/model/Conversation.kt)
-
-- **Message Transformer**: A pipeline mechanism for transforming messages before sending to AI providers (
-  InputMessageTransformer) or after receiving responses (OutputMessageTransformer). Transformers can modify message
-  content, add metadata, apply templates, handle special tags, convert formats, and perform OCR. Common transformers
-  include:
-  - TemplateTransformer: Apply Pebble templates to user messages with variables like time/date
-  - ThinkTagTransformer: Extract `<think>` tags and convert to reasoning parts
-  - RegexOutputTransformer: Apply regex replacements to assistant responses
-  - DocumentAsPromptTransformer: Convert document attachments to text prompts
-  - Base64ImageToLocalFileTransformer: Convert base64 images to local file references
-  - OcrTransformer: Perform OCR on images to extract text
-
-  Output transformers support `visualTransform()` for UI display during streaming and `onGenerationFinish()` for final
-  processing after generation completes.
-  (app/src/main/java/me/rerere/rikkahub/data/ai/transformers/Transformer.kt)
-
-## Internationalization
-
-- String resources are usually located in `app/src/main/res/values*/strings.xml`; feature modules such as `search`
-  may also maintain their own `values*/strings.xml`
-- Use `stringResource(R.string.key_name)` in Compose
-- Page-specific strings should use page prefix (e.g., `setting_page_`)
-- If the user does not explicitly request localization, prioritize implementing functionality without considering
-  localization. (e.g `Text("Hello world")`)
-- For `locale-tui` operations, use the `locale-tui-localization` skill.
+现有字符串用 `stringResource`。未要求本地化时，优先实现功能。需要 `locale-tui` 操作时读取 `locale-tui-localization` skill。

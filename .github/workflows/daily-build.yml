@@ -42,7 +42,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          submodules: recursive # 拉取子模块
 
       # 与 Android Studio 自带的 JetBrains Runtime 21 保持一致
       - name: Set up JDK
@@ -53,24 +52,6 @@ jobs:
         env:
           # jetbrains 安装器通过 GitHub API 查询版本，带上 token 避免被限流
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # web 模块的 preBuild 会执行 `pnpm run build` 构建前端，必须准备好 Node + pnpm
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: web-ui/pnpm-lock.yaml
-
-      # gradle 的 buildWebUi 任务只跑 build 不跑 install，需在此提前安装依赖
-      - name: Install web-ui dependencies
-        working-directory: web-ui
-        run: pnpm install --frozen-lockfile
 
       - name: Gradle cache
         uses: actions/cache@v4
@@ -88,13 +69,13 @@ jobs:
           # 写入签名配置到local.properties
           echo "${{ secrets.SIGNING_CONFIG }}" > local.properties
 
-          # 写入Google Services配置
-          echo '${{ secrets.GOOGLE_SERVICES_JSON }}' > app/google-services.json
 
       - name: Gradle Build
+        env:
+          OURFAIRY_ENDPOINT: ${{ vars.OURFAIRY_IDENTITY_ENDPOINT }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease
+          ./gradlew test lintDebug assembleRelease -Pourfairy.identityEndpoint="$OURFAIRY_ENDPOINT"
 
       # 把 APK 直接发布为 Prerelease，用户点链接即可下载单个 apk，无需登录、无需解压
       - name: Publish nightly prerelease

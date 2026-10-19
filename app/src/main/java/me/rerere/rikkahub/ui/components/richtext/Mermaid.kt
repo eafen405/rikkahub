@@ -1,166 +1,35 @@
 package me.rerere.rikkahub.ui.components.richtext
 
-import android.graphics.BitmapFactory
-import android.util.Base64
-import android.webkit.JavascriptInterface
-import androidx.activity.compose.LocalActivity
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import com.dokar.sonner.ToastType
-import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.Download01
-import me.rerere.hugeicons.stroke.View
-import me.rerere.rikkahub.R
-import me.rerere.rikkahub.Screen
-import me.rerere.rikkahub.ui.context.LocalNavController
-import me.rerere.rikkahub.ui.context.LocalToaster
-import me.rerere.rikkahub.ui.theme.LocalDarkMode
 import me.rerere.rikkahub.utils.escapeHtml
-import me.rerere.rikkahub.utils.exportImage
 import me.rerere.rikkahub.utils.toCssHex
 import me.rerere.ui.webview.WEB_VIEW_ASSET_URL
 import me.rerere.ui.webview.WEB_VIEW_BASE_URL
 import me.rerere.ui.webview.WebView
-import me.rerere.ui.webview.WebViewContentCache
 import me.rerere.ui.webview.rememberWebViewState
 
 @Composable
-fun Mermaid(
-    code: String,
-    modifier: Modifier = Modifier,
-) {
-    val colorScheme = MaterialTheme.colorScheme
-    val darkMode = LocalDarkMode.current
-    val context = LocalContext.current
-    val activity = LocalActivity.current
-    val toaster = LocalToaster.current
-    val navController = LocalNavController.current
-
-    val jsInterface = remember {
-        MermaidInterface(
-            onExportImage = { base64Image ->
-                runCatching {
-                    activity?.let {
-                        try {
-                            val imageBytes = Base64.decode(base64Image, Base64.DEFAULT)
-                            val bitmap =
-                                BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
-                            context.exportImage(
-                                it,
-                                bitmap,
-                                "mermaid_${System.currentTimeMillis()}.png"
-                            )
-                        } catch (e: Exception) {
-                            e.printStackTrace()
-                        }
-                    }
-                    toaster.show(
-                        context.getString(R.string.mermaid_export_success),
-                        type = ToastType.Success
-                    )
-                }.onFailure {
-                    it.printStackTrace()
-                    toaster.show(
-                        context.getString(R.string.mermaid_export_failed),
-                        type = ToastType.Error
-                    )
-                }
-            }
-        )
+fun Mermaid(code: String, modifier: Modifier = Modifier) {
+    val colors = MaterialTheme.colorScheme
+    val html = remember(code, colors) { buildMermaidHtml(code, colors) }
+    var showPreview by remember { mutableStateOf(false) }
+    Column(modifier) {
+        WebView(rememberWebViewState(data = html, baseUrl = WEB_VIEW_BASE_URL), Modifier.height(200.dp))
+        TextButton(onClick = { showPreview = true }) { Text("放大图表") }
     }
-
-    val html = remember(code, colorScheme, darkMode) {
-        buildMermaidHtml(
-            code = code,
-            colorScheme = colorScheme,
-        )
-    }
-
-    val webViewState = rememberWebViewState(
-        data = html,
-        baseUrl = WEB_VIEW_BASE_URL,
-        mimeType = "text/html",
-        encoding = "UTF-8",
-        interfaces = mapOf(
-            "AndroidInterface" to jsInterface
-        ),
-        settings = {
-            builtInZoomControls = true
-            displayZoomControls = false
-            useWideViewPort = true
-            loadWithOverviewMode = true
-        }
-    )
-
-    Column(
-        modifier = modifier
-    ) {
-        WebView(
-            state = webViewState,
-            modifier = Modifier
-                .clip(RoundedCornerShape(4.dp))
-                .height(200.dp),
-        )
-
-        if (activity != null) {
-            Row(
-                modifier = Modifier
-                    .align(Alignment.End)
-                    .padding(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                IconButton(
-                    onClick = {
-                        val contentId = WebViewContentCache.store(context.cacheDir, html)
-                        navController.navigate(Screen.WebView(contentId = contentId))
-                    },
-                ) {
-                    Icon(
-                        HugeIcons.View,
-                        contentDescription = "Preview"
-                    )
-                }
-                IconButton(
-                    onClick = {
-                        webViewState.webView?.evaluateJavascript(
-                            "exportSvgToPng();",
-                            null
-                        )
-                    },
-                ) {
-                    Icon(
-                        HugeIcons.Download01,
-                        contentDescription = stringResource(R.string.mermaid_export)
-                    )
-                }
-            }
-        }
-    }
-}
-
-private class MermaidInterface(
-    private val onExportImage: (String) -> Unit
-) {
-    @JavascriptInterface
-    fun exportImage(base64Image: String) {
-        onExportImage(base64Image)
-    }
+    if (showPreview) RichPreviewDialog(html) { showPreview = false }
 }
 
 private fun buildMermaidHtml(
@@ -253,49 +122,6 @@ private fun buildMermaidHtml(
                     }
               });
 
-              window.exportSvgToPng = function() {
-                try {
-                    const svgElement = document.querySelector('.mermaid svg');
-                    if (!svgElement) {
-                        AndroidInterface.exportImage('');
-                        return;
-                    }
-
-                    const canvas = document.createElement('canvas');
-                    const ctx = canvas.getContext('2d');
-
-                    const svgRect = svgElement.getBoundingClientRect();
-                    const width = svgRect.width;
-                    const height = svgRect.height;
-
-                    const scaleFactor = window.devicePixelRatio * 2;
-                    canvas.width = width * scaleFactor;
-                    canvas.height = height * scaleFactor;
-
-                    const svgXml = new XMLSerializer().serializeToString(svgElement);
-                    const svgBase64 = btoa(unescape(encodeURIComponent(svgXml)));
-
-                    const img = new Image();
-                    img.onload = function() {
-                        ctx.fillStyle = '${background}';
-                        ctx.fillRect(0, 0, canvas.width, canvas.height);
-                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-                        ctx.font = '14px Arial';
-                        ctx.fillStyle = '${onBackground}';
-                        ctx.fillText('rikka-ai.com', 20, canvas.height - 10);
-
-                        const pngBase64 = canvas.toDataURL('image/png').split(',')[1];
-                        AndroidInterface.exportImage(pngBase64);
-                    };
-                    img.onerror = function(e) {
-                        AndroidInterface.exportImage('');
-                    }
-                    img.src = 'data:image/svg+xml;base64,' + svgBase64;
-                } catch (e) {
-                    AndroidInterface.exportImage('');
-                }
-              };
             </script>
         </body>
         </html>

@@ -5,8 +5,6 @@ import android.net.Uri
 import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -21,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.DisableSelection
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
@@ -41,49 +38,32 @@ import androidx.compose.ui.platform.Clipboard
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.input.OffsetMapping
-import androidx.compose.ui.text.input.TransformedText
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.time.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
-import me.rerere.highlight.HighlightTextColorPalette
-import me.rerere.highlight.buildHighlightText
 import me.rerere.highlight.CodeHighlightText
-import me.rerere.highlight.CodeHighlighter
 import me.rerere.hugeicons.HugeIcons
-import me.rerere.hugeicons.stroke.ArrowDown01
-import me.rerere.hugeicons.stroke.ArrowUp01
 import me.rerere.hugeicons.stroke.Code
 import me.rerere.hugeicons.stroke.Copy01
 import me.rerere.hugeicons.stroke.Download04
 import me.rerere.hugeicons.stroke.Eye
 import me.rerere.hugeicons.stroke.View
 import me.rerere.rikkahub.R
-import me.rerere.rikkahub.Screen
-import me.rerere.rikkahub.ui.context.LocalNavController
-import me.rerere.rikkahub.ui.context.LocalSettings
-import me.rerere.rikkahub.ui.context.Navigator
 import me.rerere.rikkahub.ui.modifier.onClick
 import me.rerere.rikkahub.ui.theme.AtomOneDarkPalette
 import me.rerere.rikkahub.ui.theme.AtomOneLightPalette
 import me.rerere.rikkahub.ui.theme.JetbrainsMono
 import me.rerere.rikkahub.ui.theme.LocalDarkMode
-import me.rerere.rikkahub.utils.toDp
 import me.rerere.ui.webview.WebView
-import me.rerere.ui.webview.WebViewContentCache
 import me.rerere.ui.webview.rememberWebViewState
-import kotlin.time.Clock
 
-private const val COLLAPSE_LINES = 10
 private val PREVIEWABLE_LANGUAGES = setOf("html", "svg")
 
 @Composable
@@ -102,20 +82,17 @@ fun HighlightCodeBlock(
     val scrollState = rememberScrollState()
     val clipboardManager = LocalClipboard.current
     val scope = rememberCoroutineScope()
-    val navController = LocalNavController.current
+    var showPreview by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val settings = LocalSettings.current
     val normalizedLanguage = remember(language) { language.lowercase() }
     val canInlinePreview = completeCodeBlock && normalizedLanguage in PREVIEWABLE_LANGUAGES
     var previewMode by remember(canInlinePreview, code, normalizedLanguage) {
         mutableStateOf(false)
     }
 
-    var isExpanded by remember(settings.displaySetting.codeBlockAutoCollapse) {
-        mutableStateOf(!settings.displaySetting.codeBlockAutoCollapse)
+    if (showPreview) {
+        RichPreviewDialog(buildCodePreviewHtml(code, normalizedLanguage)) { showPreview = false }
     }
-    val autoWrap = settings.displaySetting.codeBlockAutoWrap
-    val showLineNumbers = settings.displaySetting.showLineNumbers
 
     val createDocumentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("*/*")
@@ -151,7 +128,7 @@ fun HighlightCodeBlock(
                 clipboardManager = clipboardManager,
                 code = code,
                 createDocumentLauncher = createDocumentLauncher,
-                navController = navController,
+                onPreview = { showPreview = true },
                 completeCodeBlock = completeCodeBlock,
                 previewMode = previewMode,
                 canInlinePreview = canInlinePreview,
@@ -181,174 +158,20 @@ fun HighlightCodeBlock(
                 }
                 else -> {
                     val textStyle = LocalTextStyle.current.merge(style)
-                    val codeLines = remember(code) { code.lines() }
-                    val collapsedCode = remember(codeLines) { codeLines.take(COLLAPSE_LINES).joinToString("\n") }
-                    val displayCode = if (isExpanded) code else collapsedCode
-                    val displayLines = remember(displayCode) { displayCode.lines() }
-
-                    // 如果显示行号且自动换行，需要逐行渲染以保持对齐
-                    when {
-                        showLineNumbers && autoWrap -> {
-                            CodeBlockWithLineNumbersWrapped(
-                                displayLines = displayLines,
-                                language = language,
-                                textStyle = textStyle,
-                                colorPalette = colorPalette,
-                            )
-                        }
-                        else -> {
-                            CodeBlockDefault(
-                                displayCode = displayCode,
-                                displayLines = displayLines,
-                                language = language,
-                                textStyle = textStyle,
-                                colorPalette = colorPalette,
-                                autoWrap = autoWrap,
-                                showLineNumbers = showLineNumbers,
-                                scrollState = scrollState,
-                            )
-                        }
-                    }
-
-                    Spacer(Modifier.height(4.dp))
-                    // 代码折叠按钮
-                    if (settings.displaySetting.codeBlockAutoCollapse && codeLines.size > COLLAPSE_LINES) {
-                        Box(
-                            modifier = Modifier
-                                .onClick {
-                                    isExpanded = !isExpanded
-                                }
-                                .fillMaxWidth(),
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .align(Alignment.Center)
-                                    .padding(vertical = 4.dp),
-                                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = if (isExpanded) HugeIcons.ArrowUp01 else HugeIcons.ArrowDown01,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                    modifier = Modifier.size(textStyle.fontSize.toDp())
-                                )
-                                Text(
-                                    text = if (isExpanded) {
-                                        stringResource(id = R.string.code_block_collapse)
-                                    } else {
-                                        stringResource(id = R.string.code_block_expand)
-                                    },
-                                    fontSize = textStyle.fontSize,
-                                    lineHeight = textStyle.lineHeight,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CodeBlockWithLineNumbersWrapped(
-    displayLines: List<String>,
-    language: String,
-    textStyle: TextStyle,
-    colorPalette: HighlightTextColorPalette,
-) {
-    val lineNumberWidth = remember(displayLines.size) {
-        displayLines.size.toString().length
-    }
-    SelectionContainer {
-        Column {
-            displayLines.forEachIndexed { index, line ->
-                Row(
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    DisableSelection {
-                        Text(
-                            text = (index + 1).toString().padStart(lineNumberWidth, ' '),
+                    SelectionContainer(Modifier.horizontalScroll(scrollState)) {
+                        CodeHighlightText(
+                            code = code,
+                            language = language,
                             fontSize = textStyle.fontSize,
                             lineHeight = textStyle.lineHeight,
-                            fontFamily = JetbrainsMono,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                            colors = colorPalette,
+                            overflow = TextOverflow.Visible,
                             softWrap = false,
-                            modifier = Modifier.padding(end = 8.dp)
+                            fontFamily = JetbrainsMono,
                         )
                     }
-                    CodeHighlightText(
-                        code = line,
-                        language = language,
-                        fontSize = textStyle.fontSize,
-                        lineHeight = textStyle.lineHeight,
-                        colors = colorPalette,
-                        overflow = TextOverflow.Visible,
-                        softWrap = true,
-                        fontFamily = JetbrainsMono,
-                        modifier = Modifier.weight(1f)
-                    )
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun CodeBlockDefault(
-    displayCode: String,
-    displayLines: List<String>,
-    language: String,
-    textStyle: TextStyle,
-    colorPalette: HighlightTextColorPalette,
-    autoWrap: Boolean,
-    showLineNumbers: Boolean,
-    scrollState: ScrollState,
-) {
-    Row(
-        modifier = Modifier.then(
-            if (autoWrap) {
-                Modifier
-            } else {
-                Modifier.horizontalScroll(scrollState)
-            }
-        )
-    ) {
-        // 行号列
-        if (showLineNumbers) {
-            val lineNumberWidth = remember(displayLines.size) {
-                displayLines.size.toString().length
-            }
-            Column(
-                modifier = Modifier.padding(end = 8.dp)
-            ) {
-                displayLines.forEachIndexed { index, _ ->
-                    Text(
-                        text = (index + 1).toString().padStart(lineNumberWidth, ' '),
-                        fontSize = textStyle.fontSize,
-                        lineHeight = textStyle.lineHeight,
-                        fontFamily = JetbrainsMono,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                        softWrap = false,
-                    )
-                }
-            }
-        }
-
-        // 代码列
-        SelectionContainer {
-            CodeHighlightText(
-                code = displayCode,
-                language = language,
-                modifier = Modifier.animateContentSize(),
-                fontSize = textStyle.fontSize,
-                lineHeight = textStyle.lineHeight,
-                colors = colorPalette,
-                overflow = TextOverflow.Visible,
-                softWrap = autoWrap,
-                fontFamily = JetbrainsMono
-            )
         }
     }
 }
@@ -360,7 +183,7 @@ private fun HighlightCodeActions(
     clipboardManager: Clipboard,
     code: String,
     createDocumentLauncher: ManagedActivityResultLauncher<String, Uri?>,
-    navController: Navigator,
+    onPreview: () -> Unit,
     completeCodeBlock: Boolean = true,
     previewMode: Boolean = false,
     canInlinePreview: Boolean = false,
@@ -462,9 +285,7 @@ private fun HighlightCodeActions(
                     modifier = Modifier
                         .clip(RoundedCornerShape(4.dp))
                         .onClick {
-                            val content = buildCodePreviewHtml(code = code, language = normalizedLanguage)
-                            val contentId = WebViewContentCache.store(context.cacheDir, content)
-                            navController.navigate(Screen.WebView(contentId = contentId))
+                            onPreview()
                         }
                         .padding(4.dp)
                         .size(iconSize)
@@ -503,34 +324,5 @@ private fun buildCodePreviewHtml(code: String, language: String): String {
         """<!DOCTYPE html><html><body style="margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;">$code</body></html>"""
     } else {
         code
-    }
-}
-
-class HighlightCodeVisualTransformation(
-    val language: String,
-    val highlighter: CodeHighlighter,
-    val darkMode: Boolean
-) : VisualTransformation {
-    override fun filter(text: AnnotatedString): TransformedText {
-        val annotatedString = try {
-            val colorPalette = if (darkMode) AtomOneDarkPalette else AtomOneLightPalette
-            if (text.text.isEmpty()) {
-                AnnotatedString("")
-            } else {
-                val tokens = highlighter.highlight(text.text, language)
-                buildAnnotatedString {
-                    tokens.forEach { token ->
-                        buildHighlightText(token, colorPalette)
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            AnnotatedString(text.text)
-        }
-
-        return TransformedText(
-            text = annotatedString,
-            offsetMapping = OffsetMapping.Identity
-        )
     }
 }

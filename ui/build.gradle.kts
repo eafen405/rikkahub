@@ -14,12 +14,6 @@ tasks.withType<KotlinCompile>().configureEach {
 
 dependencies {
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.exifinterface)
-    implementation(libs.androidx.ink.authoring.compose)
-    implementation(libs.androidx.ink.brush)
-    implementation(libs.androidx.ink.geometry)
-    implementation(libs.androidx.ink.rendering)
-    implementation(libs.androidx.ink.strokes)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)

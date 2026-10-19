@@ -34,14 +34,7 @@ import org.koin.dsl.module
 /** Build-time deployment address; release requires an explicit Gradle property. */
 private val identityEndpoint: String = BuildConfig.IDENTITY_ENDPOINT
 
-/**
- * The identity wiring: one credential store, one API over the app's shared HTTP
- * client, and the single session that says who the app is acting as.
- *
- * Deliberately reuses the existing [OkHttpClient] singleton so the account
- * request obeys the same proxy, timeout and interceptor configuration as every
- * other request the app makes, rather than growing a second network stack.
- */
+/** Account identity, owned sessions and remote reception share one process lifetime. */
 val identityModule = module {
     single<CredentialStore> {
         AndroidKeystoreCredentialStore(context = get<Context>())

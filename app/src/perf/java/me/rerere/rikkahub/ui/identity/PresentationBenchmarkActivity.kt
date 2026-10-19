@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,11 +33,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
 import me.rerere.rikkahub.data.remote.RemoteChatSnapshot
 import me.rerere.rikkahub.data.remote.RemoteChatState
-import me.rerere.rikkahub.ui.context.LocalNavController
-import me.rerere.rikkahub.ui.context.LocalSettings
-import me.rerere.rikkahub.ui.context.Navigator
-import me.rerere.rikkahub.ui.hooks.rememberUserSettingsState
-import me.rerere.rikkahub.ui.theme.RikkahubTheme
+import me.rerere.rikkahub.ui.fairy.FairyAppTheme
 import org.json.JSONObject
 
 /**
@@ -91,86 +86,84 @@ class PresentationBenchmarkActivity : ComponentActivity() {
         )
         setContent {
             var summary by remember { mutableStateOf("运行中，可上下滚动。") }
-            val settings by rememberUserSettingsState()
-            val navigator = remember { Navigator(mutableListOf()) }
-            CompositionLocalProvider(LocalSettings provides settings, LocalNavController provides navigator) {
-                RikkahubTheme {
-                    val snapshot by state.snapshot.collectAsStateWithLifecycle()
+            // Default display preferences: a round must be comparable with the next one, so the
+            // measurement never inherits a reader's font size or serif choice.
+            FairyAppTheme {
+                val snapshot by state.snapshot.collectAsStateWithLifecycle()
 
-                    // Watch every snapshot the receive state publishes. A version is counted once;
-                    // the frame after it is the presentation of that exact version.
-                    LaunchedEffect(Unit) {
-                        var lastVersion = -1L
-                        state.snapshot.collect { value ->
-                            val projection = value.projection ?: return@collect
-                            if (projection.version == lastVersion) return@collect
-                            lastVersion = projection.version
-                            val emitted = backend.emittedAt(projection.version) ?: return@collect
-                            // The snapshot flow is conflated, so a version skipped here was superseded
-                            // before it could be presented; only what gets a frame counts as observed.
-                            observed++
-                            stateNanos += SystemClock.elapsedRealtimeNanos() - emitted
-                            latestApplied = projection.version
-                            withFrameNanos { }
-                            frameLatencyNanos += SystemClock.elapsedRealtimeNanos() - emitted
-                        }
-                    }
-
-                    LaunchedEffect(Unit) {
-                        // Let the activity window draw once, then clear startup frames so the
-                        // workload window contains only frames this workload caused.
+                // Watch every snapshot the receive state publishes. A version is counted once;
+                // the frame after it is the presentation of that exact version.
+                LaunchedEffect(Unit) {
+                    var lastVersion = -1L
+                    state.snapshot.collect { value ->
+                        val projection = value.projection ?: return@collect
+                        if (projection.version == lastVersion) return@collect
+                        lastVersion = projection.version
+                        val emitted = backend.emittedAt(projection.version) ?: return@collect
+                        // The snapshot flow is conflated, so a version skipped here was superseded
+                        // before it could be presented; only what gets a frame counts as observed.
+                        observed++
+                        stateNanos += SystemClock.elapsedRealtimeNanos() - emitted
+                        latestApplied = projection.version
                         withFrameNanos { }
-                        delay(STARTUP_SETTLE_MILLIS)
-                        frameNanos.clear()
-                        stateNanos.clear()
-                        frameLatencyNanos.clear()
-                        observed = 0
-                        startHeap = usedHeap()
-                        windowOpen.complete(Unit)
-                        state.bind("perf-token", backend.sessionId, 1)
+                        frameLatencyNanos += SystemClock.elapsedRealtimeNanos() - emitted
                     }
+                }
 
-                    LaunchedEffect(Unit) {
-                        windowOpen.await()
-                        backend.awaitCompletion()
-                        // The history workload carries no reply, so there is no terminal document to
-                        // wait for; waiting would park the idle transcript inside the window. The
-                        // other workloads wait for their terminal document to reach a frame, and a
-                        // deadline that expires is reported as a miss, never as a small number.
-                        if (workload.replyChars > 0) {
-                            withTimeoutOrNull(TERMINAL_TIMEOUT_MILLIS) { terminalPresented.await() }
-                        } else {
-                            // Let the rendered history settle so the frame sample covers its layout.
-                            delay(HISTORY_SETTLE_MILLIS)
-                        }
-                        summary = writeResult(scenario, workload, backend, state.snapshot.value, runId)
-                        if (runId != null) finish()
+                LaunchedEffect(Unit) {
+                    // Let the activity window draw once, then clear startup frames so the
+                    // workload window contains only frames this workload caused.
+                    withFrameNanos { }
+                    delay(STARTUP_SETTLE_MILLIS)
+                    frameNanos.clear()
+                    stateNanos.clear()
+                    frameLatencyNanos.clear()
+                    observed = 0
+                    startHeap = usedHeap()
+                    windowOpen.complete(Unit)
+                    state.bind("perf-token", backend.sessionId, 1)
+                }
+
+                LaunchedEffect(Unit) {
+                    windowOpen.await()
+                    backend.awaitCompletion()
+                    // The history workload carries no reply, so there is no terminal document to
+                    // wait for; waiting would park the idle transcript inside the window. The
+                    // other workloads wait for their terminal document to reach a frame, and a
+                    // deadline that expires is reported as a miss, never as a small number.
+                    if (workload.replyChars > 0) {
+                        withTimeoutOrNull(TERMINAL_TIMEOUT_MILLIS) { terminalPresented.await() }
+                    } else {
+                        // Let the rendered history settle so the frame sample covers its layout.
+                        delay(HISTORY_SETTLE_MILLIS)
                     }
+                    summary = writeResult(scenario, workload, backend, state.snapshot.value, runId)
+                    if (runId != null) finish()
+                }
 
-                    Surface(Modifier.fillMaxSize()) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text("呈现测量 / $scenario", style = MaterialTheme.typography.titleMedium)
-                            Text(summary, style = MaterialTheme.typography.bodySmall)
-                            RemoteTranscript(
-                                messages = snapshot.projection?.messages.orEmpty(),
-                                attemptText = snapshot.projection?.attempt?.text,
-                                attemptKey = snapshot.projection?.let { it.generation to it.attempt?.attemptId },
-                                downloadEnabled = false,
-                                onDownload = { _, _ -> },
-                                settledAttempt = snapshot.projection?.let { projection ->
-                                    projection.settledAttempt?.let {
-                                        attemptRowKey(projection.generation, it.attemptId) to it.seq
-                                    }
-                                },
-                                onFinalPresented = {
-                                    if (!terminalPresented.isCompleted && backend.terminalEmitNanos > 0) {
-                                        terminalRichMs =
-                                            (SystemClock.elapsedRealtimeNanos() - backend.terminalEmitNanos) / 1_000_000.0
-                                        terminalPresented.complete(true)
-                                    }
-                                },
-                            )
-                        }
+                Surface(Modifier.fillMaxSize()) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("呈现测量 / $scenario", style = MaterialTheme.typography.titleMedium)
+                        Text(summary, style = MaterialTheme.typography.bodySmall)
+                        RemoteTranscript(
+                            messages = snapshot.projection?.messages.orEmpty(),
+                            attemptText = snapshot.projection?.attempt?.text,
+                            attemptKey = snapshot.projection?.let { it.generation to it.attempt?.attemptId },
+                            downloadEnabled = false,
+                            onDownload = { _, _ -> },
+                            settledAttempt = snapshot.projection?.let { projection ->
+                                projection.settledAttempt?.let {
+                                    attemptRowKey(projection.generation, it.attemptId) to it.seq
+                                }
+                            },
+                            onFinalPresented = {
+                                if (!terminalPresented.isCompleted && backend.terminalEmitNanos > 0) {
+                                    terminalRichMs =
+                                        (SystemClock.elapsedRealtimeNanos() - backend.terminalEmitNanos) / 1_000_000.0
+                                    terminalPresented.complete(true)
+                                }
+                            },
+                        )
                     }
                 }
             }

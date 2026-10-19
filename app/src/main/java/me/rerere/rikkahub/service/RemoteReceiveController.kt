@@ -48,7 +48,7 @@ class RemoteReceiveController(
 
     suspend fun openNotification(sessionId: String): Boolean {
         val identity = account.identity.value ?: return false
-        val opened = receiver.openNotification(sessionId)
+        val opened = receiver.openSession(sessionId)
         return opened && account.identity.value == identity
     }
 

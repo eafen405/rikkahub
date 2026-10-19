@@ -92,8 +92,8 @@ class RemoteReceiveState(
 
     fun stateForSession(sessionId: String): RemoteChatState? = chats[sessionId]
 
-    /** Intent data is a target, not authority: use the existing authenticated read. */
-    suspend fun openNotification(sessionId: String): Boolean {
+    /** Open a route target through the account's authenticated session read. */
+    suspend fun openSession(sessionId: String): Boolean {
         if (token == null || userShortId == null) return false
         val started = epoch
         owned.snapshot.first { !it.loading }
