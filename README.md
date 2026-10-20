@@ -1,5 +1,7 @@
 # OurFairy Android
 
+> 已并入 [OurFairy](https://github.com/eafen405/OurFairy)（客户端位于 `android/`），仅作历史留存，不再更新。
+
 Fairy 的 Android 客户端，使用 Kotlin、Jetpack Compose 和 Material 3 Expressive。首页互动、远程会话和分组配置共用 Fairy 的主题与动画。
 
 客户端负责身份、会话呈现、附件上传下载、录音转写、后台接收和通知。会话执行及系统配置由 OurFairy 后端提供。正文复用 Markdown、代码高亮、表格、公式、图片和 Mermaid 呈现。
